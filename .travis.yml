@@ -1,0 +1,10 @@
+language: csharp
+sudo: false
+solution: ValvePak/ValvePak.sln
+notifications:
+  email: false
+install:
+  - nuget restore ValvePak/ValvePak.sln
+script:
+  - xbuild /p:Configuration=Release ValvePak/ValvePak.sln
+  - mono ./ValvePak/packages/NUnit.ConsoleRunner.3.2.0/tools/nunit3-console.exe ./ValvePak/ValvePak.Test/bin/Release/ValvePak.Test.dll

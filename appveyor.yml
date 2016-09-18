@@ -1,0 +1,54 @@
+version: 0.1.0.{build}-AppVeyor
+configuration: Release
+assembly_info:
+  patch: true
+  file: '**\AssemblyInfo.*'
+  assembly_version: '{version}'
+  assembly_file_version: '{version}'
+  assembly_informational_version: '{version}'
+environment:
+  COVERALLS_REPO_TOKEN:
+    secure: S7+xuGL3g/U1Inato8pf0yejfHMsT5/ZTeVWwjd3LRuV9c1Hm+za3MbSIDEomtIw
+cache: '%LocalAppData%\NuGet\Cache'
+before_build:
+- cmd: nuget restore ValvePak\ValvePak.sln
+build:
+  project: ValvePak\ValvePak.sln
+  verbosity: minimal
+after_build:
+- cmd: nuget pack ValvePak\ValvePak\ValvePak.csproj
+test_script:
+- ps: >-
+    $opencover = (Resolve-Path "./ValvePak/packages/OpenCover.*/tools/OpenCover.Console.exe").ToString();
+    & $opencover -target:nunit3-console.exe "-targetargs:ValvePak/ValvePak.Test/bin/$($env:CONFIGURATION)/ValvePak.Test.dll --result=testResults.xml;format=AppVeyor" "-filter:+[ValvePak*]* -[ValvePak.Test]*" -output:opencoverCoverage.xml -register:user -returntargetcode
+
+    if ($LastExitCode -ne 0) {
+      throw "Exec: $ErrorMessage`nExit code: $LastExitCode";
+    }
+
+    if ($env:APPVEYOR_PULL_REQUEST_NUMBER -eq $null) {
+      $coveralls = (Resolve-Path "ValvePak/packages/coveralls.net.*/tools/csmacnz.coveralls.exe").ToString()
+
+      & $coveralls --opencover -i opencoverCoverage.xml --repoToken $env:COVERALLS_REPO_TOKEN --commitId $env:APPVEYOR_REPO_COMMIT --commitBranch $env:APPVEYOR_REPO_BRANCH --commitAuthor $env:APPVEYOR_REPO_COMMIT_AUTHOR --commitEmail $env:APPVEYOR_REPO_COMMIT_AUTHOR_EMAIL --commitMessage $env:APPVEYOR_REPO_COMMIT_MESSAGE --jobId $env:APPVEYOR_BUILD_NUMBER --serviceName appveyor
+    }
+artifacts:
+- path: ValvePak\ValvePak\bin\$(configuration)
+  name: ValvePak
+- path: '*.nupkg'
+  name: ValvePak.nupkg
+deploy:
+- provider: GitHub
+  auth_token:
+    secure: X+cHjOmqN/BfH2aEQg0Z8YC6NT8V/JSfirSPwsJoTEmn41Wr/Uaw284MtmUZtBf7
+  draft: false
+  prerelease: true
+  on:
+    branch: master
+    APPVEYOR_REPO_TAG: true
+- provider: NuGet
+  api_key:
+    secure: hqSxAQZqtX5Z5aWzulXmaIwPQmM87RvTurYOLmLnpHWHlQm1DfWmJn5fAUAuuLZH
+  artifact: ValvePak.nupkg
+  on:
+    branch: master
+    APPVEYOR_REPO_TAG: true
