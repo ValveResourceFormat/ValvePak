@@ -31,7 +31,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace ValveResourceFormat
+namespace SteamDatabase.ValvePak
 {
     public class Package : IDisposable
     {

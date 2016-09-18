@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace ValveResourceFormat
+namespace SteamDatabase.ValvePak
 {
     public class PackageEntry
     {

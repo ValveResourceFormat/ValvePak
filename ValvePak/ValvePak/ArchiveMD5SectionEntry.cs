@@ -1,4 +1,4 @@
-﻿namespace ValveResourceFormat
+﻿namespace SteamDatabase.ValvePak
 {
     /// <summary>
     /// VPK_ArchiveMD5SectionEntry

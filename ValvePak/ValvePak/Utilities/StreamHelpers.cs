@@ -1,7 +1,7 @@
 ﻿using System.IO;
 using System.Text;
 
-namespace ValveResourceFormat
+namespace SteamDatabase.ValvePak
 {
     internal static class StreamHelpers
     {
