@@ -8,7 +8,7 @@ assembly_info:
   assembly_informational_version: '{version}'
 environment:
   COVERALLS_REPO_TOKEN:
-    secure: S7+xuGL3g/U1Inato8pf0yejfHMsT5/ZTeVWwjd3LRuV9c1Hm+za3MbSIDEomtIw
+    secure: DCobE0dervHea/Ij7G9NM+1ismnZz/tEj4hhoAak5zIOhOSqLfuASGqvydTTBneg
 cache: '%LocalAppData%\NuGet\Cache'
 before_build:
 - cmd: nuget restore ValvePak\ValvePak.sln
