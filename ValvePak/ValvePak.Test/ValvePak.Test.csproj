@@ -48,22 +48,22 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <None Include="FIles\broken_000.vpk">
+    <None Include="Files\broken_000.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="FIles\broken_dir.vpk">
+    <None Include="Files\broken_dir.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="FIles\platform_misc_dir.vpk">
+    <None Include="Files\platform_misc_dir.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="FIles\steamdb_test_000.vpk">
+    <None Include="Files\steamdb_test_000.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="FIles\steamdb_test_dir.vpk">
+    <None Include="Files\steamdb_test_dir.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="FIles\steamdb_test_single.vpk">
+    <None Include="Files\steamdb_test_single.vpk">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="packages.config" />
