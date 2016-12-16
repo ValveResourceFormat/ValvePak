@@ -164,7 +164,7 @@ namespace SteamDatabase.ValvePak
         {
             SetFileName(filename);
 
-            var fs = new FileStream($"{FileName}{(IsDirVPK ? "_dir" : string.Empty)}.vpk", FileMode.Open, FileAccess.Read, FileShare.Read);
+            var fs = new FileStream($"{FileName}{(IsDirVPK ? "_dir" : string.Empty)}.vpk", FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
             Read(fs);
         }
