@@ -268,12 +268,12 @@ namespace SteamDatabase.ValvePak
             directory = directory?.Replace('\\', DirectorySeparatorChar).Trim(DirectorySeparatorChar);
 
             // If the directory is empty after trimming, set it to null
-            if (directory == string.Empty)
+            if (directory?.Length == 0)
             {
                 directory = null;
             }
 
-            return Entries[extension].FirstOrDefault(x => x.DirectoryName == directory && x.FileName == fileName);
+            return Entries[extension].Find(x => x.DirectoryName == directory && x.FileName == fileName);
         }
 
         /// <summary>
@@ -344,7 +344,7 @@ namespace SteamDatabase.ValvePak
             {
                 var typeName = Reader.ReadNullTermString(Encoding.UTF8);
 
-                if (typeName == string.Empty)
+                if (typeName?.Length == 0)
                 {
                     break;
                 }
@@ -363,7 +363,7 @@ namespace SteamDatabase.ValvePak
                 {
                     var directoryName = Reader.ReadNullTermString(Encoding.UTF8);
 
-                    if (directoryName == string.Empty)
+                    if (directoryName?.Length == 0)
                     {
                         break;
                     }
@@ -380,7 +380,7 @@ namespace SteamDatabase.ValvePak
                     {
                         var fileName = Reader.ReadNullTermString(Encoding.UTF8);
 
-                        if (fileName == string.Empty)
+                        if (fileName?.Length == 0)
                         {
                             break;
                         }

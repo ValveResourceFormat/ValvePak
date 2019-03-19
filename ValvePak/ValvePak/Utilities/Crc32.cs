@@ -77,7 +77,7 @@ namespace SteamDatabase.ValvePak
 
             for (var i = 0; i < buffer.Length; i++)
             {
-                crc = (crc >> 8) ^ Table[buffer[i] ^ crc & 0xff];
+                crc = (crc >> 8) ^ Table[buffer[i] ^ (crc & 0xff)];
             }
 
             return ~crc;

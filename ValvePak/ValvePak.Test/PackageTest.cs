@@ -236,8 +236,7 @@ namespace Tests
 
                             flatEntries.Add(b.FileName, b);
 
-                            byte[] entry;
-                            package.ReadEntry(b, out entry);
+                            package.ReadEntry(b, out var entry);
 
                             data.Add(b.FileName + '.' + b.TypeName, BitConverter.ToString(sha1.ComputeHash(entry)).Replace("-", string.Empty));
                         }
