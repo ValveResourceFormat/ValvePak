@@ -480,15 +480,12 @@ namespace SteamDatabase.ValvePak
 
             var keyParser = new AsnKeyParser(PublicKey);
 
-            var rsa = new RSACryptoServiceProvider();
+            var rsa = RSA.Create();
             rsa.ImportParameters(keyParser.ParseRSAPublicKey());
 
-            var deformatter = new RSAPKCS1SignatureDeformatter(rsa);
-            deformatter.SetHashAlgorithm("SHA256");
+            var data = Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + OtherMD5SectionSize));
 
-            var hash = new SHA256Managed().ComputeHash(Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + OtherMD5SectionSize)));
-
-            return deformatter.VerifySignature(hash, Signature);
+            return rsa.VerifyData(data, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         }
 
         private void ReadArchiveMD5Section()

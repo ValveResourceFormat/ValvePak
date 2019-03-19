@@ -224,7 +224,7 @@ namespace Tests
 
                 var flatEntries = new Dictionary<string, PackageEntry>();
 
-                using (var sha1 = new SHA1CryptoServiceProvider())
+                using (var sha1 = SHA1.Create())
                 {
                     var data = new Dictionary<string, string>();
 

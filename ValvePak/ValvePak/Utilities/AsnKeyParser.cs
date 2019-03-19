@@ -34,14 +34,11 @@ Portions of this software are Copyright of Alex Henderson
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Runtime.Serialization;
 using System.Security.Cryptography;
-using System.Security.Permissions;
 using System.Text;
 
 namespace SteamDatabase.ValvePak
 {
-    [Serializable]
     internal sealed class BerDecodeException : Exception
     {
         private readonly int _position;
@@ -58,12 +55,6 @@ namespace SteamDatabase.ValvePak
             _position = position;
         }
 
-        private BerDecodeException(SerializationInfo info, StreamingContext context)
-            : base(info, context)
-        {
-            _position = info.GetInt32("Position");
-        }
-
         public override string Message
         {
             get
@@ -75,13 +66,6 @@ namespace SteamDatabase.ValvePak
 
                 return sb.ToString();
             }
-        }
-
-        [SecurityPermission(SecurityAction.Demand, SerializationFormatter = true)]
-        public override void GetObjectData(SerializationInfo info, StreamingContext context)
-        {
-            base.GetObjectData(info, context);
-            info.AddValue("Position", _position);
         }
     }
 
