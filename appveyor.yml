@@ -42,7 +42,7 @@ test_script:
 artifacts:
 - path: ValvePak\ValvePak\bin\$(configuration)
   name: ValvePak
-- path: path: 'ValvePak\ValvePak\bin\$(configuration)\*.nupkg'
+- path: 'ValvePak\ValvePak\bin\$(configuration)\*.nupkg'
   name: ValvePak.nupkg
 
 deploy:
