@@ -1,4 +1,4 @@
-version: 0.4.0.{build}-AppVeyor
+version: 1.0.0.{build}-AppVeyor
 configuration: Release
 assembly_info:
   patch: true
