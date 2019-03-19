@@ -1,10 +1,17 @@
 language: csharp
-sudo: false
+sudo: required
+dist: trusty
+
+mono: none
+dotnet: 2.0.0
+
 solution: ValvePak/ValvePak.sln
+
 notifications:
   email: false
+
 install:
-  - nuget restore ValvePak/ValvePak.sln
+  - dotnet restore ValvePak/ValvePak.sln
 script:
-  - xbuild /p:Configuration=Release ValvePak/ValvePak.sln
-  - mono ./ValvePak/packages/NUnit.ConsoleRunner.3.2.0/tools/nunit3-console.exe ./ValvePak/ValvePak.Test/bin/Release/ValvePak.Test.dll
+  - dotnet build ValvePak/ValvePak.sln --configuration Release
+  - dotnet test --configuration Release ValvePak/ValvePak.Test/ValvePak.Test.csproj
