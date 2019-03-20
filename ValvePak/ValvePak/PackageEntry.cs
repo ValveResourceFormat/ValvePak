@@ -73,12 +73,12 @@ namespace SteamDatabase.ValvePak
         {
             var fileName = FileName;
 
-            if (TypeName != string.Empty)
+            if (TypeName == " ")
             {
-                fileName += "." + TypeName;
+                return fileName;
             }
 
-            return fileName;
+            return fileName + "." + TypeName;
         }
 
         /// <summary>
@@ -87,7 +87,7 @@ namespace SteamDatabase.ValvePak
         /// <returns>Absolute path.</returns>
         public string GetFullPath()
         {
-            if (DirectoryName == null)
+            if (DirectoryName == " ")
             {
                 return GetFileName();
             }

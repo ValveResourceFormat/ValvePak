@@ -227,10 +227,18 @@ namespace SteamDatabase.ValvePak
         /// <param name="filePath">Full path to the file to find.</param>
         public PackageEntry FindEntry(string filePath)
         {
-            filePath = filePath?.Replace('\\', DirectorySeparatorChar);
+            if (filePath == null)
+            {
+                throw new ArgumentNullException(nameof(filePath));
+            }
 
-            // Even though technically we are passing in full path as file name, relevant functions in next overload fix it
-            return FindEntry(Path.GetDirectoryName(filePath), filePath);
+            filePath = filePath.Replace('\\', DirectorySeparatorChar);
+
+            var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
+            var directory = lastSeparator > -1 ? filePath.Substring(0, lastSeparator) : string.Empty;
+            var fileName = filePath.Substring(lastSeparator + 1);
+
+            return FindEntry(directory, fileName);
         }
 
         /// <summary>
@@ -240,9 +248,31 @@ namespace SteamDatabase.ValvePak
         /// <param name="fileName">File name to find.</param>
         public PackageEntry FindEntry(string directory, string fileName)
         {
-            fileName = fileName?.Replace('\\', DirectorySeparatorChar);
+            if (directory == null)
+            {
+                throw new ArgumentNullException(nameof(directory));
+            }
 
-            return FindEntry(directory, Path.GetFileNameWithoutExtension(fileName), Path.GetExtension(fileName)?.TrimStart('.'));
+            if (fileName == null)
+            {
+                throw new ArgumentNullException(nameof(fileName));
+            }
+
+            var dot = fileName.LastIndexOf('.');
+            string extension;
+
+            if (dot > -1)
+            {
+                extension = fileName.Substring(dot + 1);
+                fileName = fileName.Substring(0, dot);
+            }
+            else
+            {
+                // Valve uses a space for missing extensions
+                extension = " ";
+            }
+
+            return FindEntry(directory, fileName, extension);
         }
 
         /// <summary>
@@ -253,10 +283,19 @@ namespace SteamDatabase.ValvePak
         /// <param name="extension">File extension, without the leading dot.</param>
         public PackageEntry FindEntry(string directory, string fileName, string extension)
         {
-            // Assume no extension
+            if (directory == null)
+            {
+                throw new ArgumentNullException(nameof(directory));
+            }
+
+            if (fileName == null)
+            {
+                throw new ArgumentNullException(nameof(fileName));
+            }
+
             if (extension == null)
             {
-                extension = string.Empty;
+                throw new ArgumentNullException(nameof(extension));
             }
 
             if (!Entries.ContainsKey(extension))
@@ -265,12 +304,13 @@ namespace SteamDatabase.ValvePak
             }
 
             // We normalize path separators when reading the file list
-            directory = directory?.Replace('\\', DirectorySeparatorChar).Trim(DirectorySeparatorChar);
+            // And remove the trailing slash
+            directory = directory.Replace('\\', DirectorySeparatorChar).Trim(DirectorySeparatorChar);
 
-            // If the directory is empty after trimming, set it to null
-            if (directory?.Length == 0)
+            // If the directory is empty after trimming, set it to a space to match Valve's behaviour
+            if (directory.Length == 0)
             {
-                directory = null;
+                directory = " ";
             }
 
             return Entries[extension].Find(x => x.DirectoryName == directory && x.FileName == fileName);
@@ -349,13 +389,6 @@ namespace SteamDatabase.ValvePak
                     break;
                 }
 
-                // Valve uses a space for missing extensions,
-                // we replace it with an empty string to match how System.IO.Path deals with it.
-                if (typeName == " ")
-                {
-                    typeName = string.Empty;
-                }
-
                 var entries = new List<PackageEntry>();
 
                 // Directories
@@ -366,13 +399,6 @@ namespace SteamDatabase.ValvePak
                     if (directoryName?.Length == 0)
                     {
                         break;
-                    }
-
-                    // Valve uses a space for blank directory names,
-                    // we replace it with a null to match how System.IO.Path deals with root paths.
-                    if (directoryName == " ")
-                    {
-                        directoryName = null;
                     }
 
                     // Files

@@ -113,10 +113,8 @@ namespace Tests
                 Assert.AreEqual(0x9C800116, package.FindEntry("kitten.jpg")?.CRC32);
                 Assert.AreEqual(0x9C800116, package.FindEntry(string.Empty, "kitten.jpg")?.CRC32);
                 Assert.AreEqual(0x9C800116, package.FindEntry(string.Empty, "kitten", "jpg")?.CRC32);
-                Assert.AreEqual(0x9C800116, package.FindEntry(null, "kitten.jpg")?.CRC32);
-                Assert.AreEqual(0x9C800116, package.FindEntry(null, "kitten", "jpg")?.CRC32);
-                Assert.AreEqual(0x9C800116, package.FindEntry(null, "/kitten.jpg")?.CRC32);
-                Assert.AreEqual(0x9C800116, package.FindEntry(null, "\\kitten.jpg")?.CRC32);
+                Assert.AreEqual(0x9C800116, package.FindEntry(" ", "kitten.jpg")?.CRC32);
+                Assert.AreEqual(0x9C800116, package.FindEntry(" ", "kitten", "jpg")?.CRC32);
 
                 Assert.AreEqual(0x9C800116, package.FindEntry("\\kitten.jpg")?.CRC32);
                 Assert.AreEqual(0x9C800116, package.FindEntry("\\", "kitten.jpg")?.CRC32);
@@ -129,13 +127,23 @@ namespace Tests
                 Assert.AreEqual(0x9C800116, package.FindEntry("\\/kitten.jpg")?.CRC32);
                 Assert.AreEqual(0x9C800116, package.FindEntry("\\/\\", "kitten.jpg")?.CRC32);
                 Assert.AreEqual(0x9C800116, package.FindEntry("\\\\/", "kitten", "jpg")?.CRC32);
-
-                Assert.IsNull(package.FindEntry(null));
-                Assert.IsNull(package.FindEntry(null, null));
-                Assert.IsNull(package.FindEntry(null, null, null));
             }
         }
 
+        [Test]
+        public void ThrowsNullArgumentInFindEntry()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
+
+            using (var package = new Package())
+            {
+                package.Read(path);
+
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, null));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, null, null));
+            }
+        }
         [Test]
         public void FindEntrySpacesAndExtensionless()
         {
@@ -147,18 +155,15 @@ namespace Tests
 
                 Assert.AreEqual(0x0BA144CC, package.FindEntry("test")?.CRC32);
                 Assert.AreEqual(0x0BA144CC, package.FindEntry("\\/\\", "test")?.CRC32);
-                Assert.AreEqual(0x0BA144CC, package.FindEntry("\\\\/", "test", string.Empty)?.CRC32);
-                Assert.AreEqual(0x0BA144CC, package.FindEntry("\\\\/", "test", null)?.CRC32);
-                Assert.AreEqual(0x0BA144CC, package.FindEntry(null, "test", null)?.CRC32);
+                Assert.AreEqual(0x0BA144CC, package.FindEntry("\\\\/", "test")?.CRC32);
+                Assert.AreEqual(0x0BA144CC, package.FindEntry("\\\\/", "test", " ")?.CRC32);
+                Assert.AreEqual(0x0BA144CC, package.FindEntry(" ", "test")?.CRC32);
+                Assert.AreEqual(0x0BA144CC, package.FindEntry(" ", "test", " ")?.CRC32);
 
                 Assert.AreEqual(0xBF108706, package.FindEntry("folder with space/test")?.CRC32);
                 Assert.AreEqual(0xBF108706, package.FindEntry("folder with space", "test")?.CRC32);
-                Assert.AreEqual(0xBF108706, package.FindEntry("\\folder with space", "test", string.Empty)?.CRC32);
-                Assert.AreEqual(0xBF108706, package.FindEntry("//folder with space//", "test", null)?.CRC32);
-
-                Assert.IsNull(package.FindEntry(null, null, "test"));
-                Assert.IsNull(package.FindEntry("test", null, null));
-                Assert.IsNull(package.FindEntry("folder with space", null, "test"));
+                Assert.AreEqual(0xBF108706, package.FindEntry("\\folder with space", "test", " ")?.CRC32);
+                Assert.AreEqual(0xBF108706, package.FindEntry("//folder with space//", "test", " ")?.CRC32);
 
                 Assert.AreEqual(0x09321FC0, package.FindEntry("folder with space\\space_extension. txt")?.CRC32);
                 Assert.AreEqual(0x09321FC0, package.FindEntry("/folder with space", "space_extension. txt")?.CRC32);
