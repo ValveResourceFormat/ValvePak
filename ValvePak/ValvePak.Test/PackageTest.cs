@@ -140,8 +140,11 @@ namespace Tests
                 package.Read(path);
 
                 Assert.Throws<ArgumentNullException>(() => package.FindEntry(null));
-                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, null));
-                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, null, null));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry("", null));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, ""));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, "", ""));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry("", null, ""));
+                Assert.Throws<ArgumentNullException>(() => package.FindEntry("", "", null));
             }
         }
         [Test]
