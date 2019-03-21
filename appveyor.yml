@@ -1,4 +1,4 @@
-version: 1.0.0.{build}-AppVeyor
+version: 1.0.2.{build}
 image: Visual Studio 2017
 
 configuration: Release
