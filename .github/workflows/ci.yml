@@ -22,4 +22,4 @@ jobs:
       run: dotnet build -c Release ValvePak/ValvePak.sln
 
     - name: Test
-      run: dotnet test -c Release ValvePak/ValvePak.Test/ValvePak.Test.csproj
+      run: dotnet test -c Debug ValvePak/ValvePak.Test/ValvePak.Test.csproj
