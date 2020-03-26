@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0</TargetFrameworks>
+    <TargetFramework>netstandard2.1</TargetFramework>
     <Product>Valve Pak Library</Product>
     <Description>Library to work with Valve's Pak archives in .NET</Description>
     <Copyright>Copyright © SteamDatabase 2019</Copyright>
