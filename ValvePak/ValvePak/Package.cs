@@ -140,12 +140,12 @@ namespace SteamDatabase.ValvePak
         /// <param name="fileName">Filename.</param>
         public void SetFileName(string fileName)
         {
-            if (fileName.EndsWith(".vpk", StringComparison.Ordinal))
+            if (fileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
             {
                 fileName = fileName.Substring(0, fileName.Length - 4);
             }
 
-            if (fileName.EndsWith("_dir", StringComparison.Ordinal))
+            if (fileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase))
             {
                 IsDirVPK = true;
 
