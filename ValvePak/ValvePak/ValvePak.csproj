@@ -3,18 +3,29 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Product>Valve Pak Library</Product>
-    <Description>Library to work with Valve's Pak archives in .NET</Description>
-    <Copyright>Copyright © SteamDatabase 2019</Copyright>
-    <Company>SteamDatabase</Company>
-    <Authors>SteamDatabase</Authors>
+    <Description>Fully fledged library to work with Valve's Pak archives in .NET</Description>
+    <Copyright>Copyright © SteamDB</Copyright>
+    <Company>SteamDB</Company>
+    <Authors>SteamDB</Authors>
     <RepositoryUrl>https://github.com/SteamDatabase/ValvePak</RepositoryUrl>
     <PackageProjectUrl>https://github.com/SteamDatabase/ValvePak</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
     <Version Condition="'$(APPVEYOR_BUILD_VERSION)' != ''">$(APPVEYOR_BUILD_VERSION)</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>steam valve archive pak vpk csgo dota2 tf2</PackageTags>
+    <PackageReleaseNotes>View release notes at https://github.com/SteamDatabase/ValvePak/releases</PackageReleaseNotes>
+    <PackageIcon>logo.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\Misc\logo.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
   </ItemGroup>
 
 </Project>
