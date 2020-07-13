@@ -34,6 +34,7 @@ Portions of this software are Copyright of Alex Henderson
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -102,15 +103,7 @@ namespace SteamDatabase.ValvePak
                 return false;
             }
 
-            for (int i = 0; i < first.Length; i++)
-            {
-                if (first[i] != second[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return !first.Where((t, i) => t != second[i]).Any();
         }
 
         public RSAParameters ParseRSAPublicKey()

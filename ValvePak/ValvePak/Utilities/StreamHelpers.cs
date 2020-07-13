@@ -15,23 +15,22 @@ namespace SteamDatabase.ValvePak
         {
             var characterSize = encoding.GetByteCount("e");
 
-            using (var ms = new MemoryStream())
+            using var ms = new MemoryStream();
+
+            while (true)
             {
-                while (true)
+                var data = new byte[characterSize];
+                stream.Read(data, 0, characterSize);
+
+                if (encoding.GetString(data, 0, characterSize) == "\0")
                 {
-                    var data = new byte[characterSize];
-                    stream.Read(data, 0, characterSize);
-
-                    if (encoding.GetString(data, 0, characterSize) == "\0")
-                    {
-                        break;
-                    }
-
-                    ms.Write(data, 0, data.Length);
+                    break;
                 }
 
-                return encoding.GetString(ms.ToArray());
+                ms.Write(data, 0, data.Length);
             }
+
+            return encoding.GetString(ms.ToArray());
         }
     }
 }

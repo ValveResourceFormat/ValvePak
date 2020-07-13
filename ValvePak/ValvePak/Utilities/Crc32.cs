@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 
 namespace SteamDatabase.ValvePak
 {
@@ -73,14 +74,7 @@ namespace SteamDatabase.ValvePak
         /// <returns>The computed checksum.</returns>
         public static uint Compute(byte[] buffer)
         {
-            uint crc = 0xFFFFFFFF;
-
-            for (var i = 0; i < buffer.Length; i++)
-            {
-                crc = (crc >> 8) ^ Table[buffer[i] ^ (crc & 0xff)];
-            }
-
-            return ~crc;
+            return ~buffer.Aggregate(0xFFFFFFFF, (current, t) => (current >> 8) ^ Table[t ^ (current & 0xff)]);
         }
     }
 }

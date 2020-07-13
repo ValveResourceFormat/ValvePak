@@ -203,7 +203,7 @@ namespace SteamDatabase.ValvePak
             }
             else
             {
-                throw new InvalidDataException(string.Format("Bad VPK version. ({0})", Version));
+                throw new InvalidDataException($"Bad VPK version. ({Version})");
             }
 
             HeaderSize = (uint)input.Position;
@@ -384,7 +384,7 @@ namespace SteamDatabase.ValvePak
             {
                 var typeName = Reader.ReadNullTermString(Encoding.UTF8);
 
-                if (typeName?.Length == 0)
+                if (string.IsNullOrEmpty(typeName))
                 {
                     break;
                 }
