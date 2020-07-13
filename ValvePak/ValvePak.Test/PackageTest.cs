@@ -179,6 +179,8 @@ namespace Tests
 
                 Assert.IsNull(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt"));
                 Assert.IsNull(package.FindEntry("uppercasefolder/UpperCaseFile.txt"));
+                Assert.IsNull(package.FindEntry("uppercasefolder/bad_file_forfun.TXT"));
+                Assert.IsNull(package.FindEntry("uppercasefolder/bad_file_forfun.txt2"));
             }
         }
 
