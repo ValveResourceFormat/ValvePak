@@ -207,6 +207,21 @@ namespace Tests
         }
 
         [Test]
+        public void TestPackageEntryToString()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.AreEqual("test crc=0xba144cc metadatasz=0 fnumber=0 ofs=0x00 sz=39", package.FindEntry("test")?.ToString());
+            Assert.AreEqual("folder with space/test crc=0xbf108706 metadatasz=0 fnumber=0 ofs=0x52 sz=41", package.FindEntry("folder with space/test")?.ToString());
+            Assert.AreEqual("folder with space/space_extension. txt crc=0x9321fc0 metadatasz=0 fnumber=0 ofs=0x7b sz=30", package.FindEntry("folder with space\\space_extension. txt")?.ToString());
+            Assert.AreEqual("uppercasefolder/bad_file_forfun.txt crc=0x15c1490f metadatasz=0 fnumber=0 ofs=0xa2 sz=2", package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.ToString());
+            Assert.AreEqual("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43", package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.ToString());
+        }
+
+        [Test]
         public void ExtractInlineVPK()
         {
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
