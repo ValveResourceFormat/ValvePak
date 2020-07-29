@@ -17,13 +17,13 @@ jobs:
       uses: actions/setup-dotnet@v1
 
     - name: Create NuGet Package
-      run: dotnet pack --configuration Release ValvePak/ValvePak/ValvePak.csproj /p:Version=${{ github.event.release.tag_name }}
+      run: dotnet pack --configuration Release ValvePak/ValvePak/ValvePak.csproj
 
     - name: Upload NuGet Package as Artifact
       uses: actions/upload-artifact@v2
       with:
         name: ValvePak.${{ github.event.release.tag_name }}.nupkg
-        path: 'ValvePak/ValvePak/bin/Release/ValvePak.${{ github.event.release.tag_name }}.nupkg'
+        path: 'ValvePak/ValvePak/bin/Release/ValvePak.*.nupkg'
 
     - name: Upload NuGet Package to GitHub Release
       uses: actions/upload-release-asset@v1
@@ -31,6 +31,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ github.event.release.upload_url }}
-        asset_path: 'ValvePak/ValvePak/bin/Release/ValvePak.${{ github.event.release.tag_name }}.nupkg'
+        asset_path: 'ValvePak/ValvePak/bin/Release/ValvePak.*.nupkg'
         asset_name: ValvePak.${{ github.event.release.tag_name }}.nupkg
         asset_content_type: application/zip
