@@ -140,6 +140,11 @@ namespace SteamDatabase.ValvePak
         /// <param name="fileName">Filename.</param>
         public void SetFileName(string fileName)
         {
+            if (fileName == null)
+            {
+                throw new ArgumentNullException(nameof(fileName));
+            }
+
             if (fileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
             {
                 fileName = fileName.Substring(0, fileName.Length - 4);
@@ -175,6 +180,11 @@ namespace SteamDatabase.ValvePak
         /// <param name="input">The input <see cref="Stream"/> to read from.</param>
         public void Read(Stream input)
         {
+            if (input == null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
             if (FileName == null)
             {
                 throw new InvalidOperationException("If you call Read() directly with a stream, you must call SetFileName() first.");
@@ -324,6 +334,11 @@ namespace SteamDatabase.ValvePak
         /// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
         public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
         {
+            if (entry == null)
+            {
+                throw new ArgumentNullException(nameof(entry));
+            }
+
             output = new byte[entry.SmallData.Length + entry.Length];
 
             if (entry.SmallData.Length > 0)

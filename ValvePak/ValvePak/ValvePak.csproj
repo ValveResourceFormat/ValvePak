@@ -10,6 +10,7 @@
     <PackageIcon>logo.png</PackageIcon>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>ValvePak.snk</AssemblyOriginatorKeyFile>
+    <Nullable>true</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
