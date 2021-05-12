@@ -506,7 +506,7 @@ namespace SteamDatabase.ValvePak
 
             var keyParser = new AsnKeyParser(PublicKey);
 
-            var rsa = RSA.Create();
+            using var rsa = RSA.Create();
             rsa.ImportParameters(keyParser.ParseRSAPublicKey());
 
             var data = Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + OtherMD5SectionSize));
