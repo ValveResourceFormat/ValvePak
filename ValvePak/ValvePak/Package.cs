@@ -373,7 +373,15 @@ namespace SteamDatabase.ValvePak
                     }
 
                     fs.Seek(offset, SeekOrigin.Begin);
-                    fs.Read(output, entry.SmallData.Length, (int)entry.Length);
+
+                    int length = (int)entry.Length;
+                    int readOffset = entry.SmallData.Length;
+                    int bytesRead;
+                    int totalRead = 0;
+                    while ((bytesRead = fs.Read(output, readOffset + totalRead, length - totalRead)) != 0)
+                    {
+                        totalRead += bytesRead;
+                    }
                 }
                 finally
                 {
@@ -445,7 +453,12 @@ namespace SteamDatabase.ValvePak
 
                         if (entry.SmallData.Length > 0)
                         {
-                            Reader.Read(entry.SmallData, 0, entry.SmallData.Length);
+                            int bytesRead;
+                            int totalRead = 0;
+                            while ((bytesRead = Reader.Read(entry.SmallData, totalRead, entry.SmallData.Length - totalRead)) != 0)
+                            {
+                                totalRead += bytesRead;
+                            }
                         }
 
                         entries.Add(entry);

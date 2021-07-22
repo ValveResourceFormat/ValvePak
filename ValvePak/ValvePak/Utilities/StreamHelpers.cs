@@ -20,7 +20,13 @@ namespace SteamDatabase.ValvePak
             while (true)
             {
                 var data = new byte[characterSize];
-                stream.Read(data, 0, characterSize);
+
+                int bytesRead;
+                int totalRead = 0;
+                while ((bytesRead = stream.Read(data, totalRead, characterSize - totalRead)) != 0)
+                {
+                    totalRead += bytesRead;
+                }
 
                 if (encoding.GetString(data, 0, characterSize) == "\0")
                 {
