@@ -211,6 +211,10 @@ namespace SteamDatabase.ValvePak
                 OtherMD5SectionSize = Reader.ReadUInt32();
                 SignatureSectionSize = Reader.ReadUInt32();
             }
+            else if (Version == 0x00030002) // Apex Legends, Titanfall
+            {
+                throw new NotSupportedException("Respawn uses customized vpk format which this library does not support.");
+            }
             else
             {
                 throw new InvalidDataException($"Bad VPK version. ({Version})");

@@ -204,6 +204,16 @@ namespace Tests
         }
 
         [Test]
+        public void TestRespawnVPK()
+        {
+            using var resource = new Package();
+            resource.SetFileName("apexlegends.vpk");
+
+            using var ms = new MemoryStream(new byte[] { 0x34, 0x12, 0xAA, 0x55, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
+            Assert.Throws<NotSupportedException>(() => resource.Read(ms));
+        }
+
+        [Test]
         public void ExtractInlineVPK()
         {
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
