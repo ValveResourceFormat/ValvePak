@@ -147,14 +147,14 @@ namespace SteamDatabase.ValvePak
 
             if (fileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
             {
-                fileName = fileName.Substring(0, fileName.Length - 4);
+                fileName = fileName[0..^4];
             }
 
             if (fileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase))
             {
                 IsDirVPK = true;
 
-                fileName = fileName.Substring(0, fileName.Length - 4);
+                fileName = fileName[0..^4];
             }
 
             FileName = fileName;
@@ -249,8 +249,8 @@ namespace SteamDatabase.ValvePak
             filePath = filePath.Replace('\\', DirectorySeparatorChar);
 
             var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
-            var directory = lastSeparator > -1 ? filePath.Substring(0, lastSeparator) : string.Empty;
-            var fileName = filePath.Substring(lastSeparator + 1);
+            var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
+            var fileName = filePath[(lastSeparator + 1)..];
 
             return FindEntry(directory, fileName);
         }
@@ -277,8 +277,8 @@ namespace SteamDatabase.ValvePak
 
             if (dot > -1)
             {
-                extension = fileName.Substring(dot + 1);
-                fileName = fileName.Substring(0, dot);
+                extension = fileName[(dot + 1)..];
+                fileName = fileName[..dot];
             }
             else
             {

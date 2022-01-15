@@ -229,7 +229,7 @@ namespace Tests
             TestVPKExtraction(path);
         }
 
-        private void TestVPKExtraction(string path)
+        private static void TestVPKExtraction(string path)
         {
             using var package = new Package();
             package.Read(path);
