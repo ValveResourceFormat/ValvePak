@@ -197,6 +197,24 @@ namespace Tests
         }
 
         [Test]
+        public void ThrowsOnInvalidCRC32()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+            Assert.AreEqual(0x32CFF012, file.CRC32);
+
+            file.CRC32 = 0xDEADBEEF;
+
+            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out var entry));
+            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out var entry, true));
+            Assert.DoesNotThrow(() => package.ReadEntry(file, out var entry, false));
+        }
+
+        [Test]
         public void TestGetFullPath()
         {
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
