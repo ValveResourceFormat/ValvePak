@@ -118,6 +118,27 @@ namespace Tests
         }
 
         [Test]
+        public void ThrowsNullArgumentInSetFilename()
+        {
+            using var package = new Package();
+            Assert.Throws<ArgumentNullException>(() => package.SetFileName(null));
+        }
+
+        [Test]
+        public void ThrowsNullArgumentInReadStream()
+        {
+            using var package = new Package();
+            Assert.Throws<ArgumentNullException>(() => package.Read((Stream)null));
+        }
+
+        [Test]
+        public void ThrowsNullArgumentInnReadString()
+        {
+            using var package = new Package();
+            Assert.Throws<ArgumentNullException>(() => package.Read((string)null));
+        }
+
+        [Test]
         public void ThrowsNullArgumentInFindEntry()
         {
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
@@ -131,6 +152,13 @@ namespace Tests
             Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, "", ""));
             Assert.Throws<ArgumentNullException>(() => package.FindEntry("", null, ""));
             Assert.Throws<ArgumentNullException>(() => package.FindEntry("", "", null));
+        }
+
+        [Test]
+        public void ThrowsNullArgumentInReadEntry()
+        {
+            using var package = new Package();
+            Assert.Throws<ArgumentNullException>(() => package.ReadEntry(null, out var output));
         }
 
         [Test]
