@@ -25,7 +25,7 @@ namespace Tests
         }
 
         [Test]
-        public void InvalidPackageThrows()
+        public void ThrowsOnInvalidPackage()
         {
             using var resource = new Package();
             using var ms = new MemoryStream(Enumerable.Repeat<byte>(1, 12).ToArray());
@@ -39,7 +39,7 @@ namespace Tests
         }
 
         [Test]
-        public void CorrectHeaderWrongVersionThrows()
+        public void ThrowsOnCorrectHeaderWrongVersion()
         {
             using var resource = new Package();
             resource.SetFileName("a.vpk");
@@ -227,6 +227,15 @@ namespace Tests
             var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
             Assert.AreEqual(0x32CFF012, file.CRC32);
             Assert.Throws<InvalidOperationException>(() => package.ReadEntry(file, out _));
+        }
+
+        [Test]
+        public void ThrowsOnInvalidEntryTerminator()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "invalid_terminator.vpk");
+            
+            using var package = new Package();
+            Assert.Throws<FormatException>(() => package.Read(path));
         }
 
         [Test]

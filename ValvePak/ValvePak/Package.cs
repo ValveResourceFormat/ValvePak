@@ -450,9 +450,11 @@ namespace SteamDatabase.ValvePak
                             Length = Reader.ReadUInt32()
                         };
 
-                        if (Reader.ReadUInt16() != 0xFFFF)
+                        var terminator = Reader.ReadUInt16();
+
+                        if (terminator != 0xFFFF)
                         {
-                            throw new FormatException("Invalid terminator.");
+                            throw new FormatException($"Invalid terminator, was 0x{terminator:X} but expected 0x{0xFFFF:X}.");
                         }
 
                         if (entry.SmallData.Length > 0)
