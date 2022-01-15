@@ -209,9 +209,24 @@ namespace Tests
 
             file.CRC32 = 0xDEADBEEF;
 
-            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out var entry));
-            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out var entry, true));
-            Assert.DoesNotThrow(() => package.ReadEntry(file, out var entry, false));
+            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out _));
+            Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out _, true));
+            Assert.DoesNotThrow(() => package.ReadEntry(file, out _, false));
+        }
+
+        [Test]
+        public void ThrowsOnExternalFilesNotInDirVpk()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+            using var package = new Package();
+            package.SetFileName("test.vpk");
+            package.Read(fs);
+
+            var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+            Assert.AreEqual(0x32CFF012, file.CRC32);
+            Assert.Throws<InvalidOperationException>(() => package.ReadEntry(file, out _));
         }
 
         [Test]

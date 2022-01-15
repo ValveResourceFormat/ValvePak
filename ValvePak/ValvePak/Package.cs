@@ -362,7 +362,7 @@ namespace SteamDatabase.ValvePak
                     {
                         if (!IsDirVPK)
                         {
-                            throw new InvalidOperationException("Given VPK is not a _dir, but entry is referencing an external archive.");
+                            throw new InvalidOperationException("Given VPK filename does not end in '_dir.vpk', but entry is referencing an external archive.");
                         }
 
                         var fileName = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
