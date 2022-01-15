@@ -536,10 +536,8 @@ namespace SteamDatabase.ValvePak
         {
             Reader.BaseStream.Position = 0;
 
-            var keyParser = new AsnKeyParser(PublicKey);
-
             using var rsa = RSA.Create();
-            rsa.ImportParameters(keyParser.ParseRSAPublicKey());
+            rsa.ImportSubjectPublicKeyInfo(PublicKey, out _);
 
             var data = Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + OtherMD5SectionSize));
 
