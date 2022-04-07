@@ -17,18 +17,26 @@ namespace SteamDatabase.ValvePak
         public const char DirectorySeparatorChar = '/';
 
         private BinaryReader Reader;
-        private bool IsDirVPK;
-        private uint HeaderSize;
 
         /// <summary>
-        /// Gets the File Name
+        /// Gets the file name.
         /// </summary>
         public string FileName { get; private set; }
+
+        /// <summary>
+        /// Gets whether this package had "_dir" in the name, indicating it has multiple chunk files.
+        /// </summary>
+        public bool IsDirVPK { get; private set; }
 
         /// <summary>
         /// Gets the VPK version.
         /// </summary>
         public uint Version { get; private set; }
+
+        /// <summary>
+        /// Gets the size in bytes of the header.
+        /// </summary>
+        public uint HeaderSize { get; private set; }
 
         /// <summary>
         /// Gets the size in bytes of the directory tree.
