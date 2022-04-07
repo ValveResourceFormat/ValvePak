@@ -25,6 +25,17 @@ namespace Tests
         }
 
         [Test]
+        public void TestOriginalFileNameNotEndingInVpk()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "vpk_file_not_ending_in_vpk.vpk.0123456789abc");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.AreEqual(0x9C800116, package.FindEntry("kitten.jpg")?.CRC32);
+        }
+
+        [Test]
         public void ThrowsOnInvalidPackage()
         {
             using var resource = new Package();
