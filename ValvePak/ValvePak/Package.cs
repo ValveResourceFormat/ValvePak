@@ -427,12 +427,13 @@ namespace SteamDatabase.ValvePak
                             FileName = fileName,
                             DirectoryName = directoryName,
                             TypeName = typeName,
-                            CRC32 = Reader.ReadUInt32(),
-                            SmallData = new byte[Reader.ReadUInt16()],
-                            ArchiveIndex = Reader.ReadUInt16(),
-                            Offset = Reader.ReadUInt32(),
-                            Length = Reader.ReadUInt32()
                         };
+
+                        entry.CRC32 = Reader.ReadUInt32();
+                        var smallDataSize = Reader.ReadUInt16();
+                        entry.ArchiveIndex = Reader.ReadUInt16();
+                        entry.Offset = Reader.ReadUInt32();
+                        entry.Length = Reader.ReadUInt32();
 
                         var terminator = Reader.ReadUInt16();
 
@@ -441,14 +442,20 @@ namespace SteamDatabase.ValvePak
                             throw new FormatException($"Invalid terminator, was 0x{terminator:X} but expected 0x{0xFFFF:X}.");
                         }
 
-                        if (entry.SmallData.Length > 0)
+                        if (smallDataSize > 0)
                         {
+                            entry.SmallData = new byte[smallDataSize];
+
                             int bytesRead;
                             int totalRead = 0;
                             while ((bytesRead = Reader.Read(entry.SmallData, totalRead, entry.SmallData.Length - totalRead)) != 0)
                             {
                                 totalRead += bytesRead;
                             }
+                        }
+                        else
+                        {
+                            entry.SmallData = Array.Empty<byte>();
                         }
 
                         entries.Add(entry);
