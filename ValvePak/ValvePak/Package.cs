@@ -593,7 +593,9 @@ namespace SteamDatabase.ValvePak
                 ms.WriteByte(b);
             }
 
-            return Encoding.UTF8.GetString(ms.ToArray());
+            ms.TryGetBuffer(out var buffer);
+
+            return Encoding.UTF8.GetString(buffer);
         }
     }
 }
