@@ -391,7 +391,7 @@ namespace SteamDatabase.ValvePak
             // Types
             while (true)
             {
-                var typeName = Reader.ReadNullTermString(Encoding.UTF8);
+                var typeName = ReadNullTermUtf8String();
 
                 if (string.IsNullOrEmpty(typeName))
                 {
@@ -403,7 +403,7 @@ namespace SteamDatabase.ValvePak
                 // Directories
                 while (true)
                 {
-                    var directoryName = Reader.ReadNullTermString(Encoding.UTF8);
+                    var directoryName = ReadNullTermUtf8String();
 
                     if (directoryName?.Length == 0)
                     {
@@ -413,7 +413,7 @@ namespace SteamDatabase.ValvePak
                     // Files
                     while (true)
                     {
-                        var fileName = Reader.ReadNullTermString(Encoding.UTF8);
+                        var fileName = ReadNullTermUtf8String();
 
                         if (fileName?.Length == 0)
                         {
@@ -575,6 +575,25 @@ namespace SteamDatabase.ValvePak
 
             var signatureSize = Reader.ReadInt32();
             Signature = Reader.ReadBytes(signatureSize);
+        }
+
+        private string ReadNullTermUtf8String()
+        {
+            using var ms = new MemoryStream();
+
+            while (true)
+            {
+                var b = Reader.ReadByte();
+
+                if (b == 0x00)
+                {
+                    break;
+                }
+
+                ms.WriteByte(b);
+            }
+
+            return Encoding.UTF8.GetString(ms.ToArray());
         }
     }
 }
