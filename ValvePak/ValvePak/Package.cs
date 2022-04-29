@@ -407,7 +407,7 @@ namespace SteamDatabase.ValvePak
                 {
                     var directoryName = ReadNullTermUtf8String(ms);
 
-                    if (directoryName?.Length == 0)
+                    if (string.IsNullOrEmpty(directoryName))
                     {
                         break;
                     }
@@ -417,7 +417,7 @@ namespace SteamDatabase.ValvePak
                     {
                         var fileName = ReadNullTermUtf8String(ms);
 
-                        if (fileName?.Length == 0)
+                        if (string.IsNullOrEmpty(fileName))
                         {
                             break;
                         }
