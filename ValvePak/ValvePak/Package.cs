@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -387,11 +388,12 @@ namespace SteamDatabase.ValvePak
         private void ReadEntries()
         {
             var typeEntries = new Dictionary<string, List<PackageEntry>>();
+            using var ms = new MemoryStream();
 
             // Types
             while (true)
             {
-                var typeName = ReadNullTermUtf8String();
+                var typeName = ReadNullTermUtf8String(ms);
 
                 if (string.IsNullOrEmpty(typeName))
                 {
@@ -403,7 +405,7 @@ namespace SteamDatabase.ValvePak
                 // Directories
                 while (true)
                 {
-                    var directoryName = ReadNullTermUtf8String();
+                    var directoryName = ReadNullTermUtf8String(ms);
 
                     if (directoryName?.Length == 0)
                     {
@@ -413,7 +415,7 @@ namespace SteamDatabase.ValvePak
                     // Files
                     while (true)
                     {
-                        var fileName = ReadNullTermUtf8String();
+                        var fileName = ReadNullTermUtf8String(ms);
 
                         if (fileName?.Length == 0)
                         {
@@ -577,10 +579,9 @@ namespace SteamDatabase.ValvePak
             Signature = Reader.ReadBytes(signatureSize);
         }
 
-        private string ReadNullTermUtf8String()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private string ReadNullTermUtf8String(MemoryStream ms)
         {
-            using var ms = new MemoryStream();
-
             while (true)
             {
                 var b = Reader.ReadByte();
@@ -595,7 +596,11 @@ namespace SteamDatabase.ValvePak
 
             ms.TryGetBuffer(out var buffer);
 
-            return Encoding.UTF8.GetString(buffer);
+            var str = Encoding.UTF8.GetString(buffer);
+
+            ms.SetLength(0);
+
+            return str;
         }
     }
 }
