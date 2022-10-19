@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
@@ -244,7 +245,7 @@ namespace Tests
         public void ThrowsOnInvalidEntryTerminator()
         {
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "invalid_terminator.vpk");
-            
+
             using var package = new Package();
             Assert.Throws<FormatException>(() => package.Read(path));
         }
@@ -292,6 +293,36 @@ namespace Tests
 
             using var ms = new MemoryStream(new byte[] { 0x34, 0x12, 0xAA, 0x55, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
             Assert.Throws<NotSupportedException>(() => resource.Read(ms));
+        }
+
+        [Test]
+        public void TestFileReadWithPreloadedBytes()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "preload.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            var file = package.FindEntry("lorem.txt");
+
+            Assert.IsNotNull(file);
+
+            package.ReadEntry(file, out var allBytes);
+
+            Assert.AreEqual("lorem.txt crc=0xf2cafa54 metadatasz=56 fnumber=32767 ofs=0x00 sz=588", file.ToString());
+            Assert.AreEqual(0xF2CAFA54, file.CRC32);
+            Assert.AreEqual(56, file.SmallData.Length);
+            Assert.AreEqual(588, file.Length);
+            Assert.AreEqual(Encoding.ASCII.GetBytes("Lorem ipsum dolor sit amet, consectetur adipiscing elit."), file.SmallData);
+            Assert.AreEqual(
+                Encoding.ASCII.GetBytes("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nam aliquam dapibus lorem, id suscipit urna pharetra non. " +
+                "Vestibulum eu orci ut turpis rhoncus ullamcorper non id nisi. Class aptent taciti sociosqu ad litora torquent per " +
+                "conubia nostra, per inceptos himenaeos. Ut rutrum pulvinar elit, in aliquet eros lobortis eget. Vestibulum ornare " +
+                "faucibus erat, vel fringilla purus scelerisque tempor. Proin feugiat blandit sapien eget tempus. Praesent gravida in " +
+                "risus a accumsan. Praesent egestas tincidunt dui nec laoreet. Sed ac lacus non tortor consectetur consectetur a ac " +
+                "lacus. In rhoncus turpis a nisl volutpat, nec cursus urna tincidunt.\n"),
+                allBytes
+            );
         }
 
         [Test]
