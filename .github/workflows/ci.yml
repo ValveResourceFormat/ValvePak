@@ -43,7 +43,7 @@ jobs:
     - name: Upload test coverage
       uses: codecov/codecov-action@v3
       with:
-        files: ./Tests/lcov.info
+        files: ./ValvePak/ValvePak.Test/lcov.info
         fail_ci_if_error: true
         verbose: true
 
