@@ -510,11 +510,6 @@ namespace SteamDatabase.ValvePak
                 // TODO: verify archive checksums
             }
 
-            if (PublicKey == null || Signature == null)
-            {
-                return;
-            }
-
             if (!IsSignatureValid())
             {
                 throw new InvalidDataException("VPK signature is not valid.");
@@ -527,6 +522,11 @@ namespace SteamDatabase.ValvePak
         /// <returns>True if signature is valid, false otherwise.</returns>
         public bool IsSignatureValid()
         {
+            if (PublicKey == null || Signature == null)
+            {
+                return true;
+            }
+
             Reader.BaseStream.Position = 0;
 
             using var rsa = RSA.Create();
