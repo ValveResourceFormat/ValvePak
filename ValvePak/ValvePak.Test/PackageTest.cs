@@ -356,6 +356,51 @@ namespace Tests
             Assert.IsTrue(package.IsSignatureValid());
         }
 
+        [Test]
+        public void InvalidTreeChecksumThrows()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "bad_hash_a.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+        }
+
+        [Test]
+        public void InvalidArchiveMD5EntriesChecksumThrows()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "bad_hash_b.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+        }
+
+        [Test]
+        public void InvalidWholeFileChecksumThrows()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "bad_hash_c.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+        }
+
+        [Test]
+        public void InvalidSignatureThrows()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "bad_signature.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            Assert.IsFalse(package.IsSignatureValid());
+            Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+        }
+
         private static void TestVPKExtraction(string path)
         {
             using var package = new Package();
