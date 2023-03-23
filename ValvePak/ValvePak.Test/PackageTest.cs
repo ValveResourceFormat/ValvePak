@@ -341,6 +341,21 @@ namespace Tests
             TestVPKExtraction(path);
         }
 
+        [Test]
+        public void ParsesCS2VPKWithInvalidSignature()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "cs2_new_signature.vpk");
+
+            using var package = new Package();
+            package.Read(path);
+
+            package.VerifyHashes();
+
+            Assert.IsNull(package.Signature);
+            Assert.IsNull(package.PublicKey);
+            Assert.IsTrue(package.IsSignatureValid());
+        }
+
         private static void TestVPKExtraction(string path)
         {
             using var package = new Package();
