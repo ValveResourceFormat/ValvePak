@@ -7,6 +7,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>steam valve archive pak vpk csgo dota2 tf2</PackageTags>
     <PackageReleaseNotes>View release notes at https://github.com/SteamDatabase/ValvePak/releases</PackageReleaseNotes>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>logo.png</PackageIcon>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>ValvePak.snk</AssemblyOriginatorKeyFile>
@@ -17,10 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\Misc\logo.png">
-      <Pack>True</Pack>
-      <PackagePath></PackagePath>
-    </None>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\"/>
+    <None Include="..\..\Misc\logo.png" Pack="true" PackagePath="\"/>
   </ItemGroup>
 
 </Project>
