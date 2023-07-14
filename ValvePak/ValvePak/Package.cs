@@ -298,7 +298,7 @@ namespace SteamDatabase.ValvePak
 				throw new ArgumentNullException(nameof(extension));
 			}
 
-			if (!Entries.ContainsKey(extension))
+			if (!Entries.TryGetValue(extension, out var entriesForExtension))
 			{
 				return null;
 			}
@@ -313,7 +313,7 @@ namespace SteamDatabase.ValvePak
 				directory = " ";
 			}
 
-			return Entries[extension].Find(x => x.DirectoryName == directory && x.FileName == fileName);
+			return entriesForExtension.Find(x => x.DirectoryName == directory && x.FileName == fileName);
 		}
 
 		/// <summary>
