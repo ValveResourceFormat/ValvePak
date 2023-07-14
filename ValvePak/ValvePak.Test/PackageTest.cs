@@ -7,6 +7,8 @@ using System.Text;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
+
+#pragma warning disable CS0618 // Type or member is obsolete - FindEntry overloads
 namespace Tests
 {
 	[TestFixture]

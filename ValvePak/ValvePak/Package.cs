@@ -238,7 +238,9 @@ namespace SteamDatabase.ValvePak
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
 			var fileName = filePath[(lastSeparator + 1)..];
 
+#pragma warning disable CS0618 // Type or member is obsolete
 			return FindEntry(directory, fileName);
+#pragma warning restore CS0618
 		}
 
 		/// <summary>
@@ -246,6 +248,7 @@ namespace SteamDatabase.ValvePak
 		/// </summary>
 		/// <param name="directory">Directory to search in.</param>
 		/// <param name="fileName">File name to find.</param>
+		[Obsolete("Use FindEntry(string filePath) overload instead, this method will be removed in the future.")]
 		public PackageEntry FindEntry(string directory, string fileName)
 		{
 			if (directory == null)
@@ -281,6 +284,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="directory">Directory to search in.</param>
 		/// <param name="fileName">File name to find, without the extension.</param>
 		/// <param name="extension">File extension, without the leading dot.</param>
+		[Obsolete("Use FindEntry(string filePath) overload instead, this method will be removed in the future.")]
 		public PackageEntry FindEntry(string directory, string fileName, string extension)
 		{
 			if (directory == null)
