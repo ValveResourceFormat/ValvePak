@@ -1,11 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25123.0
+# Visual Studio Version 17
+VisualStudioVersion = 17.6.33829.357
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ValvePak", "ValvePak\ValvePak.csproj", "{4BD929FD-8581-44D7-870D-919E566B3C10}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValvePak", "ValvePak\ValvePak.csproj", "{4BD929FD-8581-44D7-870D-919E566B3C10}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ValvePak.Test", "ValvePak.Test\ValvePak.Test.csproj", "{C9112A44-85FF-43A8-BB73-C9CF583CC5F8}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValvePak.Test", "ValvePak.Test\ValvePak.Test.csproj", "{C9112A44-85FF-43A8-BB73-C9CF583CC5F8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ValvePak.Benchmark", "ValvePak.Benchmark\ValvePak.Benchmark.csproj", "{EC4CFA61-B35C-44E0-8938-B439942F5FA5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,8 +23,15 @@ Global
 		{C9112A44-85FF-43A8-BB73-C9CF583CC5F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C9112A44-85FF-43A8-BB73-C9CF583CC5F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C9112A44-85FF-43A8-BB73-C9CF583CC5F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EC4CFA61-B35C-44E0-8938-B439942F5FA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EC4CFA61-B35C-44E0-8938-B439942F5FA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EC4CFA61-B35C-44E0-8938-B439942F5FA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EC4CFA61-B35C-44E0-8938-B439942F5FA5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3F4E1E5F-73CB-437E-8853-88D616B02FF2}
 	EndGlobalSection
 EndGlobal
