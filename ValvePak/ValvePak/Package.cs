@@ -102,6 +102,8 @@ namespace SteamDatabase.ValvePak
 		/// </summary>
 		public List<ArchiveMD5SectionEntry> ArchiveMD5Entries { get; private set; }
 
+		private CaseInsensitivePackageEntryComparer Comparer;
+
 		/// <summary>
 		/// Releases binary reader.
 		/// </summary>
@@ -223,6 +225,9 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// Searches for a given file entry in the file list.
+		///
+		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method will use <see cref="List{T}.BinarySearch(T, IComparer{T})"/>.
+		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
 		public PackageEntry FindEntry(string filePath)
@@ -230,6 +235,11 @@ namespace SteamDatabase.ValvePak
 			if (filePath == null)
 			{
 				throw new ArgumentNullException(nameof(filePath));
+			}
+
+			if (Comparer != null)
+			{
+				return FindEntryWithBinarySearch(filePath);
 			}
 
 			filePath = filePath.Replace('\\', DirectorySeparatorChar);
@@ -321,6 +331,78 @@ namespace SteamDatabase.ValvePak
 		}
 
 		/// <summary>
+		/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
+		/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
+		/// </summary>
+		/// <param name="filePath">Full path to the file to find.</param>
+		private PackageEntry FindEntryWithBinarySearch(string filePath)
+		{
+			filePath = filePath.Replace('\\', DirectorySeparatorChar);
+
+			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
+			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
+			var fileName = filePath[(lastSeparator + 1)..];
+
+			var dot = fileName.LastIndexOf('.');
+			string extension;
+
+			if (dot > -1)
+			{
+				extension = fileName[(dot + 1)..];
+				fileName = fileName[..dot];
+			}
+			else
+			{
+				// Valve uses a space for missing extensions
+				extension = " ";
+			}
+
+			if (!Entries.TryGetValue(extension, out var entriesForExtension))
+			{
+				return null;
+			}
+
+			// We normalize path separators when reading the file list
+			// And remove the trailing slash
+			directory = directory.Trim(DirectorySeparatorChar);
+
+			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
+			if (directory.Length == 0)
+			{
+				directory = " ";
+			}
+
+			var searchEntry = new PackageEntry
+			{
+				DirectoryName = directory,
+				FileName = fileName,
+				TypeName = extension,
+			};
+
+			var index = entriesForExtension.BinarySearch(searchEntry, Comparer);
+
+			return index < 0 ? null : entriesForExtension[index];
+		}
+
+		/// <summary>
+		/// This sorts <see cref="Entries"/> so that it can be searched through using binary search.
+		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntryWithBinarySearch"/> to search case insensitively.
+		/// </summary>
+		/// <remarks>
+		/// This is experimental and may be removed in a future release.
+		/// </remarks>
+		/// <param name="comparison">Comparison method to use.</param>
+		public void OptimizeEntriesForBinarySearch(StringComparison comparison = StringComparison.Ordinal)
+		{
+			if (Entries != null)
+			{
+				throw new InvalidOperationException("This method must be called before a package is read.");
+			}
+
+			Comparer = new CaseInsensitivePackageEntryComparer(comparison);
+		}
+
+		/// <summary>
 		/// Reads the entry from the VPK package.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
@@ -394,7 +476,8 @@ namespace SteamDatabase.ValvePak
 
 		private void ReadEntries()
 		{
-			var typeEntries = new Dictionary<string, List<PackageEntry>>();
+			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
+			var typeEntries = new Dictionary<string, List<PackageEntry>>(stringComparer);
 			using var ms = new MemoryStream();
 
 			// Types
@@ -467,6 +550,12 @@ namespace SteamDatabase.ValvePak
 
 						entries.Add(entry);
 					}
+				}
+
+				if (Comparer != null)
+				{
+					// Sorting at the end is faster than doing BinarySearch+Insert
+					entries.Sort(Comparer);
 				}
 
 				typeEntries.Add(typeName, entries);

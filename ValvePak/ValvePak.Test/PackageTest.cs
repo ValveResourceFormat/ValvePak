@@ -105,6 +105,60 @@ namespace Tests
 		}
 
 		[Test]
+		public void TestBinarySearch()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "platform_misc_dir.vpk");
+
+			using var package = new Package();
+			package.OptimizeEntriesForBinarySearch();
+			package.Read(path);
+
+			Assert.AreEqual(0xA4115395, package.FindEntry("addons\\chess\\chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("addons/chess\\chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("addons/chess/chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("\\addons/chess/chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("/addons/chess/chess.vdf")?.CRC32);
+
+			Assert.IsNull(package.FindEntry("\\addons/chess/hello_github_reader.vdf"));
+			Assert.IsNull(package.FindEntry("\\addons/hello_github_reader/chess.vdf"));
+
+			foreach (var extension in package.Entries.Values)
+			{
+				foreach (var entry in extension)
+				{
+					Assert.AreEqual(entry, package.FindEntry(entry.GetFullPath()));
+				}
+			}
+		}
+
+		[Test]
+		public void TestBinarySearchCaseInsensitive()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "platform_misc_dir.vpk");
+
+			using var package = new Package();
+			package.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
+			package.Read(path);
+
+			Assert.AreEqual(0xA4115395, package.FindEntry("ADDONS\\chess\\chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("addons/CHESS\\chess.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("addons/chess/CHESS.vdf")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("\\addons/chess/chess.VDF")?.CRC32);
+			Assert.AreEqual(0xA4115395, package.FindEntry("/addons/CHESS/chess.vdf")?.CRC32);
+
+			Assert.IsNull(package.FindEntry("\\addons/CHESS/hello_github_reader.vdf"));
+			Assert.IsNull(package.FindEntry("\\addons/hello_github_reader/CHESS.vdf"));
+
+			foreach (var extension in package.Entries.Values)
+			{
+				foreach (var entry in extension)
+				{
+					Assert.AreEqual(entry, package.FindEntry(entry.GetFullPath()));
+				}
+			}
+		}
+
+		[Test]
 		public void FindEntryRoot()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
@@ -401,6 +455,17 @@ namespace Tests
 
 			Assert.IsFalse(package.IsSignatureValid());
 			Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+		}
+
+		[Test]
+		public void OptimizingAfterReadThrows()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_dir.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			Assert.Throws<InvalidOperationException>(() => package.OptimizeEntriesForBinarySearch());
 		}
 
 		private static void TestVPKExtraction(string path)
