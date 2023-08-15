@@ -6,7 +6,7 @@
     <Description>Fully fledged library to work with Valve's Pak archives in .NET</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>steam valve archive pak vpk csgo dota2 tf2</PackageTags>
-    <PackageReleaseNotes>View release notes at https://github.com/SteamDatabase/ValvePak/releases</PackageReleaseNotes>
+    <PackageReleaseNotes>View release notes at https://github.com/ValveResourceFormat/ValvePak/releases</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>logo.png</PackageIcon>
     <SignAssembly>true</SignAssembly>

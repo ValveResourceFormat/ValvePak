@@ -18,11 +18,11 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup>
-    <Authors>SteamDB</Authors>
-    <Copyright>Copyright © SteamDB</Copyright>
-    <RepositoryUrl>https://github.com/SteamDatabase/ValvePak</RepositoryUrl>
+    <Authors>ValvePak Contributors</Authors>
+    <Copyright>Copyright © ValvePak Contributors</Copyright>
+    <RepositoryUrl>https://github.com/ValveResourceFormat/ValvePak</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageProjectUrl>https://github.com/SteamDatabase/ValvePak</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/ValveResourceFormat/ValvePak</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 </Project>
