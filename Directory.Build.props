@@ -22,7 +22,7 @@
     <Copyright>Copyright © ValvePak Contributors</Copyright>
     <RepositoryUrl>https://github.com/ValveResourceFormat/ValvePak</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageProjectUrl>https://github.com/ValveResourceFormat/ValvePak</PackageProjectUrl>
+    <PackageProjectUrl>https://valveresourceformat.github.io/</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 </Project>
