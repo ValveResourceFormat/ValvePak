@@ -468,6 +468,14 @@ namespace Tests
 			Assert.Throws<InvalidOperationException>(() => package.OptimizeEntriesForBinarySearch());
 		}
 
+		[Test]
+		public void DoesNotThrowWhenFindingInUnintializedPackage()
+		{
+			using var package = new Package();
+
+			Assert.IsNull(package.FindEntry("test.txt"));
+		}
+
 		private static void TestVPKExtraction(string path)
 		{
 			using var package = new Package();
