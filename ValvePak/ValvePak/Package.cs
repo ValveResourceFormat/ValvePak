@@ -11,7 +11,7 @@ namespace SteamDatabase.ValvePak
 	/// <summary>
 	/// VPK (Valve Pak) files are uncompressed archives used to package game content.
 	/// </summary>
-	public class Package : IDisposable
+	public partial class Package : IDisposable
 	{
 		public const int MAGIC = 0x55AA1234;
 
