@@ -410,6 +410,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
+			// TODO: Add overload to read into existing byte array (ArrayPool)
 			if (entry == null)
 			{
 				throw new ArgumentNullException(nameof(entry));
@@ -578,6 +579,7 @@ namespace SteamDatabase.ValvePak
 			{
 				Reader.BaseStream.Position = 0;
 
+				// TODO: Stream or transform in chunks
 				var hash = md5.ComputeHash(Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + 32)));
 
 				if (!hash.SequenceEqual(WholeFileChecksum))
