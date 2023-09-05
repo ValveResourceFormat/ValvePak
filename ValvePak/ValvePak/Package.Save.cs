@@ -14,7 +14,8 @@ namespace SteamDatabase.ValvePak
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
-		public void AddFile(string filePath, byte[] fileData)
+		/// <returns>The added entry.</returns>
+		public PackageEntry AddFile(string filePath, byte[] fileData)
 		{
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
@@ -58,6 +59,8 @@ namespace SteamDatabase.ValvePak
 			}
 
 			typeEntries.Add(entry);
+
+			return entry;
 		}
 
 		/// <summary>
