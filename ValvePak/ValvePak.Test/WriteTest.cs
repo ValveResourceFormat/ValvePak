@@ -129,5 +129,15 @@ namespace Tests
 			Assert.AreEqual("folder", file4.DirectoryName);
 			Assert.AreEqual("hello", file4.FileName);
 		}
+
+		[Test]
+		public void NormalizesSlashes()
+		{
+			using var package = new Package();
+			var file = package.AddFile("a/b\\c\\d.txt", Array.Empty<byte>());
+			Assert.AreEqual("txt", file.TypeName);
+			Assert.AreEqual("a/b/c", file.DirectoryName);
+			Assert.AreEqual("d", file.FileName);
+		}
 	}
 }

@@ -39,6 +39,8 @@ namespace SteamDatabase.ValvePak
 		/// <returns>The added entry.</returns>
 		public PackageEntry AddFile(string filePath, byte[] fileData)
 		{
+			filePath = filePath.Replace('\\', DirectorySeparatorChar);
+
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
 			var fileName = filePath[(lastSeparator + 1)..];
