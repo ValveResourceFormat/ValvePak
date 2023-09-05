@@ -1,7 +1,5 @@
 using System.IO;
-using System.Runtime.Intrinsics.Arm;
 using System.Text;
-using NuGet.Frameworks;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 

@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace SteamDatabase.ValvePak
@@ -563,88 +561,24 @@ namespace SteamDatabase.ValvePak
 			}
 
 			Entries = typeEntries;
-		}
 
-		/// <summary>
-		/// Verify checksums and signatures provided in the VPK
-		/// </summary>
-		public void VerifyHashes()
-		{
-			if (Version != 2)
-			{
-				throw new InvalidDataException("Only version 2 is supported.");
-			}
-
-			using (var md5 = MD5.Create())
-			{
-				Reader.BaseStream.Position = 0;
-
-				// TODO: Stream or transform in chunks
-				var hash = md5.ComputeHash(Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + 32)));
-
-				if (!hash.SequenceEqual(WholeFileChecksum))
-				{
-					throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
-				}
-
-				Reader.BaseStream.Position = HeaderSize;
-
-				hash = md5.ComputeHash(Reader.ReadBytes((int)TreeSize));
-
-				if (!hash.SequenceEqual(TreeChecksum))
-				{
-					throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
-				}
-
-				Reader.BaseStream.Position = HeaderSize + TreeSize + FileDataSectionSize;
-
-				hash = md5.ComputeHash(Reader.ReadBytes((int)ArchiveMD5SectionSize));
-
-				if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
-				{
-					throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
-				}
-
-				// TODO: verify archive checksums
-			}
-
-			if (!IsSignatureValid())
-			{
-				throw new InvalidDataException("VPK signature is not valid.");
-			}
-		}
-
-		/// <summary>
-		/// Verifies the RSA signature.
-		/// </summary>
-		/// <returns>True if signature is valid, false otherwise.</returns>
-		public bool IsSignatureValid()
-		{
-			if (PublicKey == null || Signature == null)
-			{
-				return true;
-			}
-
-			Reader.BaseStream.Position = 0;
-
-			using var rsa = RSA.Create();
-			rsa.ImportSubjectPublicKeyInfo(PublicKey, out _);
-
-			var data = Reader.ReadBytes((int)(HeaderSize + TreeSize + FileDataSectionSize + ArchiveMD5SectionSize + OtherMD5SectionSize));
-
-			return rsa.VerifyData(data, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+			// Set to real size that was read for hash verification, in case it was tampered with
+			TreeSize = (uint)Reader.BaseStream.Position - HeaderSize;
 		}
 
 		private void ReadArchiveMD5Section()
 		{
-			ArchiveMD5Entries = new List<ArchiveMD5SectionEntry>();
+			FileSizeBeforeArchiveMD5Entries = (uint)Reader.BaseStream.Position;
 
 			if (ArchiveMD5SectionSize == 0)
 			{
+				ArchiveMD5Entries = new List<ArchiveMD5SectionEntry>();
 				return;
 			}
 
-			var entries = ArchiveMD5SectionSize / 28; // 28 is sizeof(VPK_MD5SectionEntry), which is int + int + int + 16 chars
+			var entries = (int)(ArchiveMD5SectionSize / 28); // 28 is sizeof(VPK_MD5SectionEntry), which is int + int + int + 16 chars
+
+			ArchiveMD5Entries = new List<ArchiveMD5SectionEntry>(entries);
 
 			for (var i = 0; i < entries; i++)
 			{
@@ -667,11 +601,14 @@ namespace SteamDatabase.ValvePak
 
 			TreeChecksum = Reader.ReadBytes(16);
 			ArchiveMD5EntriesChecksum = Reader.ReadBytes(16);
+			FileSizeBeforeWholeFileHash = (uint)Reader.BaseStream.Position;
 			WholeFileChecksum = Reader.ReadBytes(16);
 		}
 
 		private void ReadSignatureSection()
 		{
+			FileSizeBeforeSignature = (uint)Reader.BaseStream.Position;
+
 			if (SignatureSectionSize == 0)
 			{
 				return;

@@ -239,7 +239,6 @@ namespace SteamDatabase.ValvePak
 				}
 
 				// File tree hash
-				//fileTreeMD5.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
 				writer.Write(fileTreeMD5.Hash);
 
 				fullFileMD5.TransformBlock(fileTreeMD5.Hash, 0, fileTreeMD5.Hash.Length, null, 0);
