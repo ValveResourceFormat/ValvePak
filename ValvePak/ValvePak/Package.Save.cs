@@ -35,6 +35,11 @@ namespace SteamDatabase.ValvePak
 				extension = " ";
 			}
 
+			if (directory.Length == 0)
+			{
+				directory = " ";
+			}
+
 			// Putting file data into SmallData is kind of a hack
 			var entry = new PackageEntry
 			{
