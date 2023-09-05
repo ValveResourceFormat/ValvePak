@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Text;
 using NUnit.Framework;
@@ -75,6 +76,58 @@ namespace Tests
 			packageWritten.VerifyHashes();
 
 			Assert.AreEqual(1000, packageWritten.Entries["txt"].Count);
+		}
+
+		[Test]
+		public void AddAndRemoveFiles()
+		{
+			using var package = new Package();
+			package.AddFile("test1.txt", Array.Empty<byte>());
+			package.AddFile("test2.txt", Array.Empty<byte>());
+			package.AddFile("test3.txt", Array.Empty<byte>());
+			package.AddFile("test4.txt", Array.Empty<byte>());
+			Assert.IsTrue(package.Entries.ContainsKey("txt"));
+			Assert.AreEqual(4, package.Entries["txt"].Count);
+			Assert.IsTrue(package.RemoveFile(package.FindEntry("test2.txt")));
+			Assert.IsNull(package.FindEntry("test2.txt"));
+			Assert.IsNotNull(package.FindEntry("test1.txt"));
+			Assert.IsFalse(package.RemoveFile(new PackageEntry
+			{
+				FileName = "test5",
+				TypeName = "txt",
+			}));
+			Assert.AreEqual(3, package.Entries["txt"].Count);
+			Assert.IsTrue(package.RemoveFile(package.FindEntry("test4.txt")));
+			Assert.IsTrue(package.RemoveFile(package.FindEntry("test3.txt")));
+			Assert.IsTrue(package.RemoveFile(package.FindEntry("test1.txt")));
+			Assert.IsEmpty(package.Entries);
+		}
+
+		[Test]
+		public void SetsSpaces()
+		{
+			using var package = new Package();
+			var file = package.AddFile("", Array.Empty<byte>());
+			Assert.AreEqual(" ", file.TypeName);
+			Assert.AreEqual(" ", file.DirectoryName);
+			Assert.AreEqual("", file.FileName);
+			Assert.IsTrue(package.Entries.ContainsKey(" "));
+			Assert.AreEqual(file, package.Entries[" "][0]);
+
+			var file2 = package.AddFile("hello", Array.Empty<byte>());
+			Assert.AreEqual(" ", file2.TypeName);
+			Assert.AreEqual(" ", file2.DirectoryName);
+			Assert.AreEqual("hello", file2.FileName);
+
+			var file3 = package.AddFile("hello.txt", Array.Empty<byte>());
+			Assert.AreEqual("txt", file3.TypeName);
+			Assert.AreEqual(" ", file3.DirectoryName);
+			Assert.AreEqual("hello", file3.FileName);
+
+			var file4 = package.AddFile("folder/hello", Array.Empty<byte>());
+			Assert.AreEqual(" ", file4.TypeName);
+			Assert.AreEqual("folder", file4.DirectoryName);
+			Assert.AreEqual("hello", file4.FileName);
 		}
 	}
 }

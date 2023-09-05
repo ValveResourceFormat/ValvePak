@@ -10,6 +10,28 @@ namespace SteamDatabase.ValvePak
 	public partial class Package
 	{
 		/// <summary>
+		/// Remove file from current package.
+		/// </summary>
+		/// <param name="entry">The package entry to remove.</param>
+		/// <returns>Returns true if entry was removed, false otherwise.</returns>
+		public bool RemoveFile(PackageEntry entry)
+		{
+			if (!Entries.TryGetValue(entry.TypeName, out var typeEntries))
+			{
+				return false;
+			}
+
+			var removed = typeEntries.Remove(entry);
+
+			if (typeEntries.Count == 0)
+			{
+				Entries.Remove(entry.TypeName);
+			}
+
+			return removed;
+		}
+
+		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
