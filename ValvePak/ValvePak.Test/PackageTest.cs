@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using NUnit.Framework;
@@ -42,7 +41,7 @@ namespace Tests
 		public void ThrowsOnInvalidPackage()
 		{
 			using var resource = new Package();
-			using var ms = new MemoryStream(Enumerable.Repeat<byte>(1, 12).ToArray());
+			using var ms = new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
 
 			// Should yell about not setting file name
 			Assert.Throws<InvalidOperationException>(() => resource.Read(ms));

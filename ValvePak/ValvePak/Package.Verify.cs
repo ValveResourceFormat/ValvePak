@@ -1,7 +1,5 @@
 using System;
-using System.Buffers;
 using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 
 namespace SteamDatabase.ValvePak
@@ -72,11 +70,29 @@ namespace SteamDatabase.ValvePak
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
+			static bool HashEquals(byte[] a, byte[] b)
+			{
+				if (a.Length != b.Length)
+				{
+					return false;
+				}
+
+				for (int i = 0; i < a.Length; i++)
+				{
+					if (a[i] != b[i])
+					{
+						return false;
+					}
+				}
+
+				return true;
+			}
+
 			using var md5 = MD5.Create();
 			var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
 			var hash = md5.ComputeHash(subStream);
 
-			if (!hash.SequenceEqual(WholeFileChecksum))
+			if (!HashEquals(hash, WholeFileChecksum))
 			{
 				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
 			}
@@ -84,7 +100,7 @@ namespace SteamDatabase.ValvePak
 			subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
 			hash = md5.ComputeHash(subStream);
 
-			if (!hash.SequenceEqual(TreeChecksum))
+			if (!HashEquals(hash, TreeChecksum))
 			{
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
@@ -92,7 +108,7 @@ namespace SteamDatabase.ValvePak
 			subStream = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
 			hash = md5.ComputeHash(subStream);
 
-			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
+			if (!HashEquals(hash, ArchiveMD5EntriesChecksum))
 			{
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}

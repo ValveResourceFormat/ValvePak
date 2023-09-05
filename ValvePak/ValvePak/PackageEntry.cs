@@ -1,5 +1,3 @@
-using System;
-
 namespace SteamDatabase.ValvePak
 {
 	public class PackageEntry
