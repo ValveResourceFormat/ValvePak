@@ -114,11 +114,6 @@ namespace SteamDatabase.ValvePak
 			}
 
 			// TODO: verify archive checksums
-
-			if (!IsSignatureValid())
-			{
-				throw new InvalidDataException("VPK signature is not valid.");
-			}
 		}
 
 		/// <summary>

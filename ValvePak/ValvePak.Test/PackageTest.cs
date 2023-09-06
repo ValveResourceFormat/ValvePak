@@ -445,7 +445,7 @@ namespace Tests
 		}
 
 		[Test]
-		public void InvalidSignatureThrows()
+		public void InvalidSignatureFails()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "bad_signature.vpk");
 
@@ -453,7 +453,6 @@ namespace Tests
 			package.Read(path);
 
 			Assert.IsFalse(package.IsSignatureValid());
-			Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
 		}
 
 		[Test]
