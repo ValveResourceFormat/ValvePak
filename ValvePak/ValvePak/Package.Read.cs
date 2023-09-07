@@ -113,27 +113,8 @@ namespace SteamDatabase.ValvePak
 
 				try
 				{
-					var offset = entry.Offset;
-
-					if (entry.ArchiveIndex != 0x7FFF)
-					{
-						if (!IsDirVPK)
-						{
-							throw new InvalidOperationException("Given VPK filename does not end in '_dir.vpk', but entry is referencing an external archive.");
-						}
-
-						var fileName = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
-
-						fs = new FileStream(fileName, FileMode.Open, FileAccess.Read);
-					}
-					else
-					{
-						fs = Reader.BaseStream;
-
-						offset += HeaderSize + TreeSize;
-					}
-
-					fs.Seek(offset, SeekOrigin.Begin);
+					fs = GetFileStream(entry.ArchiveIndex);
+					fs.Seek(entry.Offset, SeekOrigin.Current);
 
 					int length = (int)entry.Length;
 					int readOffset = entry.SmallData.Length;
@@ -312,6 +293,30 @@ namespace SteamDatabase.ValvePak
 
 			var signatureSize = Reader.ReadInt32();
 			Signature = Reader.ReadBytes(signatureSize);
+		}
+
+		private Stream GetFileStream(ushort archiveIndex)
+		{
+			Stream stream;
+
+			if (archiveIndex != 0x7FFF)
+			{
+				if (!IsDirVPK)
+				{
+					throw new InvalidOperationException("Given VPK filename does not end in '_dir.vpk', but entry is referencing an external archive.");
+				}
+
+				var fileName = $"{FileName}_{archiveIndex:D3}.vpk";
+
+				stream = new FileStream(fileName, FileMode.Open, FileAccess.Read);
+			}
+			else
+			{
+				stream = Reader.BaseStream;
+				stream.Seek(HeaderSize + TreeSize, SeekOrigin.Begin);
+			}
+
+			return stream;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

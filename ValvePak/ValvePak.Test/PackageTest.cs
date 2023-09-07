@@ -474,6 +474,19 @@ namespace Tests
 			Assert.IsNull(package.FindEntry("test.txt"));
 		}
 
+		[Test]
+		public void ThrowsDueToMissingPakFile()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "platform_misc_dir.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			package.VerifyHashes();
+
+			Assert.Throws<FileNotFoundException>(() => package.VerifyChunkHashes());
+		}
+
 		private static void TestVPKExtraction(string path)
 		{
 			using var package = new Package();

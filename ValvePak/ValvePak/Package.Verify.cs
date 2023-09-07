@@ -61,31 +61,13 @@ namespace SteamDatabase.ValvePak
 		private uint FileSizeBeforeSignature;
 
 		/// <summary>
-		/// Verify checksums and signatures provided in the VPK
+		/// Verify MD5 hashes provided in the VPK.
 		/// </summary>
 		public void VerifyHashes()
 		{
 			if (Version != 2)
 			{
 				throw new InvalidDataException("Only version 2 is supported.");
-			}
-
-			static bool HashEquals(byte[] a, byte[] b)
-			{
-				if (a.Length != b.Length)
-				{
-					return false;
-				}
-
-				for (int i = 0; i < a.Length; i++)
-				{
-					if (a[i] != b[i])
-					{
-						return false;
-					}
-				}
-
-				return true;
 			}
 
 			using var md5 = MD5.Create();
@@ -112,8 +94,59 @@ namespace SteamDatabase.ValvePak
 			{
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}
+		}
 
-			// TODO: verify archive checksums
+		/// <summary>
+		/// Verify MD5 hashes of individual chunk files provided in the VPK.
+		/// </summary>
+		public void VerifyChunkHashes()
+		{
+			using var md5 = MD5.Create();
+			Stream stream = null;
+			var lastArchiveIndex = uint.MaxValue;
+
+			try
+			{
+				// TODO: When created by Valve, entries are sorted, and are 1MB chunks
+				foreach (var entry in ArchiveMD5Entries)
+				{
+					if (entry.ArchiveIndex > short.MaxValue)
+					{
+						throw new InvalidDataException("Unexpected archive index");
+					}
+
+					if (lastArchiveIndex != entry.ArchiveIndex)
+					{
+						if (lastArchiveIndex != 0x7FFF)
+						{
+							stream?.Close();
+						}
+
+						stream = GetFileStream((ushort)entry.ArchiveIndex);
+						lastArchiveIndex = entry.ArchiveIndex;
+					}
+					else
+					{
+						var offset = entry.ArchiveIndex == 0x7FFF ? HeaderSize + TreeSize : 0;
+						stream.Seek(offset, SeekOrigin.Begin);
+					}
+
+					var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
+					var hash = md5.ComputeHash(subStream);
+
+					if (!HashEquals(hash, entry.Checksum))
+					{
+						throw new InvalidDataException($"Package checksum mismatch in archive {entry.ArchiveIndex} at {entry.Offset} ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(entry.Checksum)})");
+					}
+				}
+			}
+			finally
+			{
+				if (lastArchiveIndex != 0x7FFF)
+				{
+					stream?.Close();
+				}
+			}
 		}
 
 		/// <summary>
@@ -134,5 +167,24 @@ namespace SteamDatabase.ValvePak
 
 			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 		}
+
+		private static bool HashEquals(byte[] a, byte[] b)
+		{
+			if (a.Length != b.Length)
+			{
+				return false;
+			}
+
+			for (int i = 0; i < a.Length; i++)
+			{
+				if (a[i] != b[i])
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
 	}
 }
