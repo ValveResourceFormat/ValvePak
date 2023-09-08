@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 
 namespace SteamDatabase.ValvePak
@@ -71,18 +72,10 @@ namespace SteamDatabase.ValvePak
 			}
 
 			using var md5 = MD5.Create();
-			var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+			var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
 			var hash = md5.ComputeHash(subStream);
 
-			if (!HashEquals(hash, WholeFileChecksum))
-			{
-				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
-			}
-
-			subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
-			hash = md5.ComputeHash(subStream);
-
-			if (!HashEquals(hash, TreeChecksum))
+			if (!hash.SequenceEqual(TreeChecksum))
 			{
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
@@ -90,29 +83,49 @@ namespace SteamDatabase.ValvePak
 			subStream = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
 			hash = md5.ComputeHash(subStream);
 
-			if (!HashEquals(hash, ArchiveMD5EntriesChecksum))
+			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
 			{
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
+			}
+
+			subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+			hash = md5.ComputeHash(subStream);
+
+			if (!hash.SequenceEqual(WholeFileChecksum))
+			{
+				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
 			}
 		}
 
 		/// <summary>
 		/// Verify MD5 hashes of individual chunk files provided in the VPK.
 		/// </summary>
-		public void VerifyChunkHashes()
+		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
+		public void VerifyChunkHashes(IProgress<string> progressReporter = null)
 		{
 			using var md5 = MD5.Create();
 			Stream stream = null;
 			var lastArchiveIndex = uint.MaxValue;
 
+			// When created by Valve, entries are sorted, and are 1MB chunks
+			var allEntries = ArchiveMD5Entries
+				.OrderBy(file => file.Offset)
+				.GroupBy(file => file.ArchiveIndex)
+				.OrderBy(x => x.Key)
+				.SelectMany(x => x);
+
 			try
 			{
-				// TODO: When created by Valve, entries are sorted, and are 1MB chunks
-				foreach (var entry in ArchiveMD5Entries)
+				foreach (var entry in allEntries)
 				{
 					if (entry.ArchiveIndex > short.MaxValue)
 					{
 						throw new InvalidDataException("Unexpected archive index");
+					}
+
+					if (progressReporter != null)
+					{
+						progressReporter.Report($"Verifying MD5 hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
 					}
 
 					if (lastArchiveIndex != entry.ArchiveIndex)
@@ -134,11 +147,52 @@ namespace SteamDatabase.ValvePak
 					var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
 					var hash = md5.ComputeHash(subStream);
 
-					if (!HashEquals(hash, entry.Checksum))
+					if (!hash.SequenceEqual(entry.Checksum))
 					{
 						throw new InvalidDataException($"Package checksum mismatch in archive {entry.ArchiveIndex} at {entry.Offset} ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(entry.Checksum)})");
 					}
 				}
+
+				progressReporter?.Report("Successfully verified archive MD5 hashes.");
+			}
+			finally
+			{
+				if (lastArchiveIndex != 0x7FFF)
+				{
+					stream?.Close();
+				}
+			}
+		}
+
+		/// <summary>
+		/// Verify CRC32 checksums of all files in the package.
+		/// </summary>
+		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
+		public void VerifyFileChecksums(IProgress<string> progressReporter = null)
+		{
+			Stream stream = null;
+			var lastArchiveIndex = uint.MaxValue;
+
+			var allEntries = Entries
+				.SelectMany(file => file.Value)
+				.OrderBy(file => file.Offset)
+				.GroupBy(file => file.ArchiveIndex)
+				.OrderBy(x => x.Key)
+				.SelectMany(x => x);
+
+			try
+			{
+				foreach (var entry in allEntries)
+				{
+					if (progressReporter != null)
+					{
+						progressReporter.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
+					}
+
+					ReadEntry(entry, out var _, validateCrc: true);
+				}
+
+				progressReporter?.Report("Successfully verified file CRC32 checksums.");
 			}
 			finally
 			{
@@ -167,24 +221,5 @@ namespace SteamDatabase.ValvePak
 
 			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 		}
-
-		private static bool HashEquals(byte[] a, byte[] b)
-		{
-			if (a.Length != b.Length)
-			{
-				return false;
-			}
-
-			for (int i = 0; i < a.Length; i++)
-			{
-				if (a[i] != b[i])
-				{
-					return false;
-				}
-			}
-
-			return true;
-		}
-
 	}
 }

@@ -397,6 +397,23 @@ namespace Tests
 		}
 
 		[Test]
+		public void TestFileChecksums()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+			Assert.DoesNotThrow(() => package.VerifyFileChecksums());
+
+			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			Assert.AreEqual(0x32CFF012, file.CRC32);
+
+			file.CRC32 = 0xDEADBEEF;
+
+			Assert.Throws<InvalidDataException>(() => package.VerifyFileChecksums());
+		}
+
+		[Test]
 		public void ParsesCS2VPKWithInvalidSignature()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "cs2_new_signature.vpk");
