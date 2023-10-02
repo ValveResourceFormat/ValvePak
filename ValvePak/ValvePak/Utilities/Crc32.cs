@@ -69,11 +69,11 @@ namespace SteamDatabase.ValvePak
         /// </summary>
         /// <param name="buffer">The array of bytes to compute the checksum for.</param>
         /// <returns>The computed checksum.</returns>
-        public static uint Compute(byte[] buffer)
+        public static uint Compute(byte[] buffer, int length)
         {
 			var crc = 0xFFFFFFFF;
 
-			for (var i = 0; i < buffer.Length; i++)
+			for (var i = 0; i < length; i++)
 			{
 				crc = (crc >> 8) ^ Table[buffer[i] ^ crc & 0xff];
 			}

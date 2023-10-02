@@ -100,7 +100,25 @@ namespace SteamDatabase.ValvePak
 				throw new ArgumentNullException(nameof(entry));
 			}
 
-			output = new byte[entry.SmallData.Length + entry.Length];
+			output = new byte[entry.TotalLength];
+
+			ReadEntry(entry, output, validateCrc);
+		}
+
+		/// <summary>
+		/// Reads the entry from the VPK package into a user-provided output byte array.
+		/// </summary>
+		/// <param name="entry">Package entry.</param>
+		/// <param name="output">Output buffer, size of the buffer must be at least <see cref="PackageEntry.TotalLength"/>.</param>
+		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
+		public void ReadEntry(PackageEntry entry, byte[] output, bool validateCrc = true)
+		{
+			var totalLength = (int)entry.TotalLength;
+
+			if (output.Length < totalLength)
+			{
+				throw new ArgumentOutOfRangeException(nameof(output), "Size of the provided output buffer is smaller than entry.TotalLength.");
+			}
 
 			if (entry.SmallData.Length > 0)
 			{
@@ -134,7 +152,7 @@ namespace SteamDatabase.ValvePak
 				}
 			}
 
-			if (validateCrc && entry.CRC32 != Crc32.Compute(output))
+			if (validateCrc && entry.CRC32 != Crc32.Compute(output, totalLength))
 			{
 				throw new InvalidDataException("CRC32 mismatch for read data.");
 			}

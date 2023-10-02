@@ -71,7 +71,7 @@ namespace SteamDatabase.ValvePak
 				DirectoryName = directory,
 				TypeName = extension,
 				SmallData = fileData,
-				CRC32 = Crc32.Compute(fileData),
+				CRC32 = Crc32.Compute(fileData, fileData.Length),
 				ArchiveIndex = 0x7FFF,
 			};
 

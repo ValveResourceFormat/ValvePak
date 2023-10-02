@@ -397,6 +397,24 @@ namespace Tests
 		}
 
 		[Test]
+		public void ExtractIntoUserProvidedByteArray()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_single.vpk");
+			using var package = new Package();
+			package.Read(path);
+
+			var entry = package.FindEntry("kitten.jpg");
+			var biggerBuffer = new byte[entry.TotalLength + 256];
+			package.ReadEntry(entry, biggerBuffer, validateCrc: true);
+
+			var correctBuffer = new byte[entry.TotalLength];
+			package.ReadEntry(entry, correctBuffer, validateCrc: true);
+
+			var smallBuffer = new byte[entry.TotalLength - 1];
+			Assert.Throws<ArgumentOutOfRangeException>(() => package.ReadEntry(entry, smallBuffer));
+		}
+
+		[Test]
 		public void TestFileChecksums()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
