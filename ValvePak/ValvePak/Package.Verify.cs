@@ -123,10 +123,7 @@ namespace SteamDatabase.ValvePak
 						throw new InvalidDataException("Unexpected archive index");
 					}
 
-					if (progressReporter != null)
-					{
-						progressReporter.Report($"Verifying MD5 hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
-					}
+					progressReporter?.Report($"Verifying MD5 hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
 
 					if (lastArchiveIndex != entry.ArchiveIndex)
 					{
@@ -184,10 +181,7 @@ namespace SteamDatabase.ValvePak
 			{
 				foreach (var entry in allEntries)
 				{
-					if (progressReporter != null)
-					{
-						progressReporter.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
-					}
+					progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
 
 					ReadEntry(entry, out var _, validateCrc: true);
 				}

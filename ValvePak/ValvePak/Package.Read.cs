@@ -201,9 +201,8 @@ namespace SteamDatabase.ValvePak
 							FileName = fileName,
 							DirectoryName = directoryName,
 							TypeName = typeName,
+							CRC32 = Reader.ReadUInt32()
 						};
-
-						entry.CRC32 = Reader.ReadUInt32();
 						var smallDataSize = Reader.ReadUInt16();
 						entry.ArchiveIndex = Reader.ReadUInt16();
 						entry.Offset = Reader.ReadUInt32();
