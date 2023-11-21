@@ -281,7 +281,7 @@ namespace SteamDatabase.ValvePak
 		{
 			if (OtherMD5SectionSize != 48)
 			{
-				throw new InvalidDataException($"Encountered OtherMD5Section with size of {OtherMD5SectionSize} (should be 48)");
+				return;
 			}
 
 			TreeChecksum = Reader.ReadBytes(16);
