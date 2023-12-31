@@ -292,7 +292,8 @@ namespace Tests
 			file.CRC32 = 0xDEADBEEF;
 
 			Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out _));
-			Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out _, true));
+			var ex = Assert.Throws<InvalidDataException>(() => package.ReadEntry(file, out _, true));
+			Assert.That(ex.Message, Is.EqualTo("CRC32 mismatch for read data (expected DEADBEEF, got 32CFF012)."));
 			Assert.DoesNotThrow(() => package.ReadEntry(file, out _, false));
 		}
 

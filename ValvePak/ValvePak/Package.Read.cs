@@ -152,9 +152,16 @@ namespace SteamDatabase.ValvePak
 				}
 			}
 
-			if (validateCrc && entry.CRC32 != Crc32.Compute(output, totalLength))
+			if (!validateCrc)
 			{
-				throw new InvalidDataException("CRC32 mismatch for read data.");
+				return;
+			}
+
+			var actualChecksum = Crc32.Compute(output, totalLength);
+
+			if (entry.CRC32 != actualChecksum)
+			{
+				throw new InvalidDataException($"CRC32 mismatch for read data (expected {entry.CRC32:X2}, got {actualChecksum:X2}).");
 			}
 		}
 
