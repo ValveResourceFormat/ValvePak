@@ -167,9 +167,6 @@ namespace SteamDatabase.ValvePak
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyFileChecksums(IProgress<string> progressReporter = null)
 		{
-			Stream stream = null;
-			var lastArchiveIndex = uint.MaxValue;
-
 			var allEntries = Entries
 				.SelectMany(file => file.Value)
 				.OrderBy(file => file.Offset)
@@ -177,24 +174,14 @@ namespace SteamDatabase.ValvePak
 				.OrderBy(x => x.Key)
 				.SelectMany(x => x);
 
-			try
+			foreach (var entry in allEntries)
 			{
-				foreach (var entry in allEntries)
-				{
-					progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
+				progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
 
-					ReadEntry(entry, out var _, validateCrc: true);
-				}
+				ReadEntry(entry, out var _, validateCrc: true);
+			}
 
-				progressReporter?.Report("Successfully verified file CRC32 checksums.");
-			}
-			finally
-			{
-				if (lastArchiveIndex != 0x7FFF)
-				{
-					stream?.Close();
-				}
-			}
+			progressReporter?.Report("Successfully verified file CRC32 checksums.");
 		}
 
 		/// <summary>
