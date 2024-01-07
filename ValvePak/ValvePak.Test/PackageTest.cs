@@ -41,7 +41,7 @@ namespace Tests
 		public void ThrowsOnInvalidPackage()
 		{
 			using var resource = new Package();
-			using var ms = new MemoryStream(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
+			using var ms = new MemoryStream([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
 			// Should yell about not setting file name
 			Assert.Throws<InvalidOperationException>(() => resource.Read(ms));
@@ -57,7 +57,7 @@ namespace Tests
 			using var resource = new Package();
 			resource.SetFileName("a.vpk");
 
-			using var ms = new MemoryStream(new byte[] { 0x34, 0x12, 0xAA, 0x55, 0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22 });
+			using var ms = new MemoryStream([0x34, 0x12, 0xAA, 0x55, 0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22]);
 			Assert.Throws<InvalidDataException>(() => resource.Read(ms));
 		}
 
@@ -368,7 +368,7 @@ namespace Tests
 			using var resource = new Package();
 			resource.SetFileName("apexlegends.vpk");
 
-			using var ms = new MemoryStream(new byte[] { 0x34, 0x12, 0xAA, 0x55, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 });
+			using var ms = new MemoryStream([0x34, 0x12, 0xAA, 0x55, 0x02, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00]);
 			Assert.Throws<NotSupportedException>(() => resource.Read(ms));
 		}
 
@@ -559,33 +559,31 @@ namespace Tests
 			Assert.That(package.Entries.Keys, Does.Contain("proto"));
 
 			var flatEntries = new Dictionary<string, PackageEntry>();
+			var data = new Dictionary<string, string>();
 
-			using (var sha1 = SHA1.Create())
+			foreach (var a in package.Entries)
 			{
-				var data = new Dictionary<string, string>();
-
-				foreach (var a in package.Entries)
+				foreach (var b in a.Value)
 				{
-					foreach (var b in a.Value)
-					{
-						Assert.That(b.TypeName, Is.EqualTo(a.Key));
+					Assert.That(b.TypeName, Is.EqualTo(a.Key));
 
-						flatEntries.Add(b.FileName, b);
+					flatEntries.Add(b.FileName, b);
 
-						package.ReadEntry(b, out var entry);
+					package.ReadEntry(b, out var entry);
 
-						data.Add(b.FileName + '.' + b.TypeName, BitConverter.ToString(sha1.ComputeHash(entry)).Replace("-", string.Empty));
-					}
+#pragma warning disable CA5350 // Do Not Use Weak Cryptographic Algorithms, does not matter here
+					data.Add(b.FileName + '.' + b.TypeName, Convert.ToHexString(SHA1.HashData(entry)));
+#pragma warning restore CA5350
 				}
-
-				Assert.Multiple(() =>
-				{
-					Assert.That(data, Has.Count.EqualTo(3));
-					Assert.That(data["kitten.jpg"], Is.EqualTo("E0D865F19F0A4A7EA3753FBFCFC624EE8B46928A"));
-					Assert.That(data["steammessages_base.proto"], Is.EqualTo("2EFFCB09BE81E8BEE88CB7BA8C18E87D3E1168DB"));
-					Assert.That(data["steammessages_clientserver.proto"], Is.EqualTo("22741F66442A4DC880725D2CC019E6C9202FD70C"));
-				});
 			}
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(data, Has.Count.EqualTo(3));
+				Assert.That(data["kitten.jpg"], Is.EqualTo("E0D865F19F0A4A7EA3753FBFCFC624EE8B46928A"));
+				Assert.That(data["steammessages_base.proto"], Is.EqualTo("2EFFCB09BE81E8BEE88CB7BA8C18E87D3E1168DB"));
+				Assert.That(data["steammessages_clientserver.proto"], Is.EqualTo("22741F66442A4DC880725D2CC019E6C9202FD70C"));
+			});
 
 			Assert.Multiple(() =>
 			{

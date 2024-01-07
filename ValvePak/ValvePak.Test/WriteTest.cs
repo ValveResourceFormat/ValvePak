@@ -87,10 +87,10 @@ namespace Tests
 		public void AddAndRemoveFiles()
 		{
 			using var package = new Package();
-			package.AddFile("test1.txt", Array.Empty<byte>());
-			package.AddFile("test2.txt", Array.Empty<byte>());
-			package.AddFile("test3.txt", Array.Empty<byte>());
-			package.AddFile("test4.txt", Array.Empty<byte>());
+			package.AddFile("test1.txt", []);
+			package.AddFile("test2.txt", []);
+			package.AddFile("test3.txt", []);
+			package.AddFile("test4.txt", []);
 #pragma warning disable NUnit2045 // Use Assert.Multiple
 			Assert.That(package.Entries.ContainsKey("txt"), Is.True);
 			Assert.That(package.Entries["txt"], Has.Count.EqualTo(4));
@@ -114,7 +114,7 @@ namespace Tests
 		public void SetsSpaces()
 		{
 			using var package = new Package();
-			var file = package.AddFile("", Array.Empty<byte>());
+			var file = package.AddFile("", []);
 			Assert.Multiple(() =>
 			{
 				Assert.That(file.TypeName, Is.EqualTo(" "));
@@ -124,7 +124,7 @@ namespace Tests
 				Assert.That(package.Entries[" "][0], Is.EqualTo(file));
 			});
 
-			var file2 = package.AddFile("hello", Array.Empty<byte>());
+			var file2 = package.AddFile("hello", []);
 			Assert.Multiple(() =>
 			{
 				Assert.That(file2.TypeName, Is.EqualTo(" "));
@@ -132,7 +132,7 @@ namespace Tests
 				Assert.That(file2.FileName, Is.EqualTo("hello"));
 			});
 
-			var file3 = package.AddFile("hello.txt", Array.Empty<byte>());
+			var file3 = package.AddFile("hello.txt", []);
 			Assert.Multiple(() =>
 			{
 				Assert.That(file3.TypeName, Is.EqualTo("txt"));
@@ -140,7 +140,7 @@ namespace Tests
 				Assert.That(file3.FileName, Is.EqualTo("hello"));
 			});
 
-			var file4 = package.AddFile("folder/hello", Array.Empty<byte>());
+			var file4 = package.AddFile("folder/hello", []);
 			Assert.Multiple(() =>
 			{
 				Assert.That(file4.TypeName, Is.EqualTo(" "));
@@ -153,7 +153,7 @@ namespace Tests
 		public void NormalizesSlashes()
 		{
 			using var package = new Package();
-			var file = package.AddFile("a/b\\c\\d.txt", Array.Empty<byte>());
+			var file = package.AddFile("a/b\\c\\d.txt", []);
 			Assert.Multiple(() =>
 			{
 				Assert.That(file.TypeName, Is.EqualTo("txt"));
