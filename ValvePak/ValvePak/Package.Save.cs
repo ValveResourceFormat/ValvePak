@@ -83,7 +83,7 @@ namespace SteamDatabase.ValvePak
 
 			if (!Entries.TryGetValue(extension, out var typeEntries))
 			{
-				typeEntries = new List<PackageEntry>();
+				typeEntries = [];
 				Entries[extension] = typeEntries;
 			}
 
@@ -140,7 +140,7 @@ namespace SteamDatabase.ValvePak
 
 					if (!typeTree.TryGetValue(directoryName, out var directoryEntries))
 					{
-						directoryEntries = new List<PackageEntry>();
+						directoryEntries = [];
 						typeTree[directoryName] = directoryEntries;
 					}
 
@@ -275,7 +275,7 @@ namespace SteamDatabase.ValvePak
 				fullFileMD5.TransformBlock(fileTreeMD5.Hash, 0, fileTreeMD5.Hash.Length, null, 0);
 
 				// File hashes hash
-				var fileHashesMD5 = hashesMD5.ComputeHash(Array.Empty<byte>()); // We did not write any file hashes
+				var fileHashesMD5 = hashesMD5.ComputeHash([]); // We did not write any file hashes
 				writer.Write(fileHashesMD5);
 
 				// Full file hash

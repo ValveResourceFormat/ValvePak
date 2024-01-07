@@ -235,7 +235,7 @@ namespace SteamDatabase.ValvePak
 						}
 						else
 						{
-							entry.SmallData = Array.Empty<byte>();
+							entry.SmallData = [];
 						}
 
 						entries.Add(entry);
@@ -263,7 +263,7 @@ namespace SteamDatabase.ValvePak
 
 			if (ArchiveMD5SectionSize == 0)
 			{
-				ArchiveMD5Entries = new List<ArchiveMD5SectionEntry>();
+				ArchiveMD5Entries = [];
 				return;
 			}
 

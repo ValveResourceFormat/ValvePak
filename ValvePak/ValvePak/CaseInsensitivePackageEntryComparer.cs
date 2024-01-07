@@ -3,14 +3,9 @@ using System.Collections.Generic;
 
 namespace SteamDatabase.ValvePak
 {
-	class CaseInsensitivePackageEntryComparer : IComparer<PackageEntry>
+	class CaseInsensitivePackageEntryComparer(StringComparison comparison) : IComparer<PackageEntry>
 	{
-		public StringComparison Comparison { get; } = default;
-
-		public CaseInsensitivePackageEntryComparer(StringComparison comparison)
-		{
-			Comparison = comparison;
-		}
+		public StringComparison Comparison { get; } = comparison;
 
 		/// <remarks>
 		/// Intentionally not comparing TypeName because this comparer is used on Entries which is split by extension already.
