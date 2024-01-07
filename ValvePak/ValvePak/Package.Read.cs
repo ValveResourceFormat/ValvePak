@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -341,6 +342,31 @@ namespace SteamDatabase.ValvePak
 			}
 
 			return stream;
+		}
+
+		/// <summary>
+		/// Returns <see cref="MemoryMappedViewStream"/> when possible, otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
+		/// This only works on split packages (<see cref="IsDirVPK"/>) and when entries have no preload bytes.
+		/// </summary>
+		/// <param name="entry">Package entry.</param>
+		/// <returns>Stream for a given package entry contents.</returns>
+		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
+		{
+			if (!IsDirVPK || entry.ArchiveIndex == 0x7FFF || entry.SmallData.Length > 0)
+			{
+				ReadEntry(entry, out var output, false);
+
+				return new MemoryStream(output);
+			}
+
+			if (!MemoryMappedPaks.TryGetValue(entry.ArchiveIndex, out var stream))
+			{
+				var path = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
+				stream = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+				MemoryMappedPaks[entry.ArchiveIndex] = stream;
+			}
+
+			return stream.CreateViewStream(entry.Offset, entry.Length, MemoryMappedFileAccess.Read);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 
 namespace SteamDatabase.ValvePak
 {
@@ -17,6 +18,7 @@ namespace SteamDatabase.ValvePak
 		public const char DirectorySeparatorChar = '/';
 
 		private BinaryReader Reader;
+		private readonly Dictionary<int, MemoryMappedFile> MemoryMappedPaks = [];
 
 		/// <summary>
 		/// Gets the file name.
@@ -111,10 +113,20 @@ namespace SteamDatabase.ValvePak
 
 		protected virtual void Dispose(bool disposing)
 		{
-			if (disposing && Reader != null)
+			if (disposing)
 			{
-				Reader.Dispose();
-				Reader = null;
+				if (Reader != null)
+				{
+					Reader.Dispose();
+					Reader = null;
+				}
+
+				foreach (var stream in MemoryMappedPaks.Values)
+				{
+					stream.Dispose();
+				}
+
+				MemoryMappedPaks.Clear();
 			}
 		}
 
