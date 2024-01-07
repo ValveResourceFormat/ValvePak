@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -158,7 +159,7 @@ namespace SteamDatabase.ValvePak
 				return;
 			}
 
-			var actualChecksum = Crc32.Compute(output, totalLength);
+			var actualChecksum = Crc32.HashToUInt32(output.AsSpan(0, totalLength));
 
 			if (entry.CRC32 != actualChecksum)
 			{

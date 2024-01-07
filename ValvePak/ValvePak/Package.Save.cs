@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Hashing;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -71,7 +72,7 @@ namespace SteamDatabase.ValvePak
 				DirectoryName = directory,
 				TypeName = extension,
 				SmallData = fileData,
-				CRC32 = Crc32.Compute(fileData, fileData.Length),
+				CRC32 = Crc32.HashToUInt32(fileData),
 				ArchiveIndex = 0x7FFF,
 			};
 
