@@ -41,8 +41,9 @@ jobs:
         path: 'ValvePak/ValvePak/bin/Release/*.nupkg'
 
     - name: Upload test coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         files: ./ValvePak/ValvePak.Test/lcov.info
         fail_ci_if_error: true
         verbose: true
