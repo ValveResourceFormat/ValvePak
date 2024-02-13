@@ -348,12 +348,13 @@ namespace SteamDatabase.ValvePak
 		/// <summary>
 		/// Returns <see cref="MemoryMappedViewStream"/> when possible, otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
 		/// This only works on split packages (<see cref="IsDirVPK"/>) and when entries have no preload bytes.
+		/// Files smaller or equal to 4096 bytes will be read into memory.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
-			if (!IsDirVPK || entry.ArchiveIndex == 0x7FFF || entry.SmallData.Length > 0)
+			if (!IsDirVPK || entry.ArchiveIndex == 0x7FFF || entry.Length <= 4096 || entry.SmallData.Length > 0)
 			{
 				ReadEntry(entry, out var output, false);
 

@@ -18,8 +18,10 @@ namespace Tests
 			package.Read(path);
 
 			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg"));
-
 			Assert.That(stream, Is.InstanceOf<MemoryMappedViewStream>());
+
+			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto"));
+			Assert.That(stream2, Is.InstanceOf<MemoryStream>()); // This file is less than 4kb
 		}
 
 		[Test]
