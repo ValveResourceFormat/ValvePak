@@ -10,10 +10,8 @@ namespace Tests
 	[TestFixture]
 	public class MemoryMappedTest
 	{
-#pragma warning disable CA5350 // Do Not Use Weak Cryptographic Algorithms, does not matter here
-		private static void VerifyKitten(Stream stream) => Assert.That(Convert.ToHexString(SHA1.HashData(stream)), Is.EqualTo("E0D865F19F0A4A7EA3753FBFCFC624EE8B46928A"));
-		private static void VerifyProto(Stream stream) => Assert.That(Convert.ToHexString(SHA1.HashData(stream)), Is.EqualTo("2EFFCB09BE81E8BEE88CB7BA8C18E87D3E1168DB"));
-#pragma warning restore CA5350
+		private static void VerifyKitten(Stream stream) => Assert.That(Convert.ToHexString(SHA256.HashData(stream)), Is.EqualTo("1C03B452FEE5274B0BC1FA1A866EE6C8FA0D43AA464C6BCFB3AB531F6E813081"));
+		private static void VerifyProto(Stream stream) => Assert.That(Convert.ToHexString(SHA256.HashData(stream)), Is.EqualTo("FCC96AE59EE6BB9EEC4E16A50C928EFD3FB16E1CCA49E38BD2FA8391AB7936BE"));
 
 		[Test]
 		public void ReturnsCorrectStreamsForSplitPackages()

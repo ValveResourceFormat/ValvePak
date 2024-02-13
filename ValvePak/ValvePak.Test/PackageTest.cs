@@ -571,18 +571,16 @@ namespace Tests
 
 					package.ReadEntry(b, out var entry);
 
-#pragma warning disable CA5350 // Do Not Use Weak Cryptographic Algorithms, does not matter here
-					data.Add(b.FileName + '.' + b.TypeName, Convert.ToHexString(SHA1.HashData(entry)));
-#pragma warning restore CA5350
+					data.Add(b.FileName + '.' + b.TypeName, Convert.ToHexString(SHA256.HashData(entry)));
 				}
 			}
 
 			Assert.Multiple(() =>
 			{
 				Assert.That(data, Has.Count.EqualTo(3));
-				Assert.That(data["kitten.jpg"], Is.EqualTo("E0D865F19F0A4A7EA3753FBFCFC624EE8B46928A"));
-				Assert.That(data["steammessages_base.proto"], Is.EqualTo("2EFFCB09BE81E8BEE88CB7BA8C18E87D3E1168DB"));
-				Assert.That(data["steammessages_clientserver.proto"], Is.EqualTo("22741F66442A4DC880725D2CC019E6C9202FD70C"));
+				Assert.That(data["kitten.jpg"], Is.EqualTo("1C03B452FEE5274B0BC1FA1A866EE6C8FA0D43AA464C6BCFB3AB531F6E813081"));
+				Assert.That(data["steammessages_base.proto"], Is.EqualTo("FCC96AE59EE6BB9EEC4E16A50C928EFD3FB16E1CCA49E38BD2FA8391AB7936BE"));
+				Assert.That(data["steammessages_clientserver.proto"], Is.EqualTo("1F90C38527D0853B4713942668F2DC83F433DBE919C002825A4526138A200428"));
 			});
 
 			Assert.Multiple(() =>
