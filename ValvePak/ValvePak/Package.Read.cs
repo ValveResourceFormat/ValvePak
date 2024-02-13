@@ -347,28 +347,58 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// Returns <see cref="MemoryMappedViewStream"/> when possible, otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
-		/// This only works on split packages (<see cref="IsDirVPK"/>) and when entries have no preload bytes.
+		/// This only works when entries have no preload bytes.
 		/// Files smaller or equal to 4096 bytes will be read into memory.
+		///
+		/// When trying to map a file in a non-split packages (<see cref="IsDirVPK"/>),
+		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
-			if (!IsDirVPK || entry.ArchiveIndex == 0x7FFF || entry.Length <= 4096 || entry.SmallData.Length > 0)
+			if (entry.Length <= 4096 || entry.SmallData.Length > 0)
 			{
 				ReadEntry(entry, out var output, false);
-
 				return new MemoryStream(output);
 			}
 
 			if (!MemoryMappedPaks.TryGetValue(entry.ArchiveIndex, out var stream))
 			{
-				var path = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
+				string path;
+
+				// If the package was opened by providing a file path, we can memory map non directory files
+				if (entry.ArchiveIndex == 0x7FFF)
+				{
+					if (Reader.BaseStream is FileStream fileStream)
+					{
+						path = fileStream.Name;
+					}
+					else
+					{
+						// This package was read by in a stream that is not FileStream, or not using Read(path).
+						// In this case fallback to reading the file into memory. We could rely on the what was passed into SetFileName, but why.
+						ReadEntry(entry, out var output, false);
+						return new MemoryStream(output);
+					}
+				}
+				else
+				{
+					path = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
+				}
+
 				stream = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
 				MemoryMappedPaks[entry.ArchiveIndex] = stream;
 			}
 
-			return stream.CreateViewStream(entry.Offset, entry.Length, MemoryMappedFileAccess.Read);
+			var offset = entry.Offset;
+
+			if (entry.ArchiveIndex == 0x7FFF)
+			{
+				offset += HeaderSize + TreeSize;
+			}
+
+			return stream.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
