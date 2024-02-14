@@ -170,11 +170,7 @@ namespace SteamDatabase.ValvePak
 				throw new ArgumentNullException(nameof(filePath));
 			}
 
-			if (Comparer != null)
-			{
-				return FindEntryWithBinarySearch(filePath);
-			}
-
+			// Normalize path separators when reading the file list
 			filePath = filePath.Replace('\\', DirectorySeparatorChar);
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
@@ -200,53 +196,7 @@ namespace SteamDatabase.ValvePak
 				return null;
 			}
 
-			// We normalize path separators when reading the file list
-			// And remove the trailing slash
-			directory = directory.Replace('\\', DirectorySeparatorChar).Trim(DirectorySeparatorChar);
-
-			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
-			if (directory.Length == 0)
-			{
-				directory = " ";
-			}
-
-			return entriesForExtension.Find(x => x.DirectoryName == directory && x.FileName == fileName);
-		}
-
-		/// <summary>
-		/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
-		/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
-		/// </summary>
-		/// <param name="filePath">Full path to the file to find.</param>
-		private PackageEntry FindEntryWithBinarySearch(string filePath)
-		{
-			filePath = filePath.Replace('\\', DirectorySeparatorChar);
-
-			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
-			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
-			var fileName = filePath[(lastSeparator + 1)..];
-
-			var dot = fileName.LastIndexOf('.');
-			string extension;
-
-			if (dot > -1)
-			{
-				extension = fileName[(dot + 1)..];
-				fileName = fileName[..dot];
-			}
-			else
-			{
-				// Valve uses a space for missing extensions
-				extension = " ";
-			}
-
-			if (Entries == null || !Entries.TryGetValue(extension, out var entriesForExtension))
-			{
-				return null;
-			}
-
-			// We normalize path separators when reading the file list
-			// And remove the trailing slash
+			// Remove the trailing slash
 			directory = directory.Trim(DirectorySeparatorChar);
 
 			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
@@ -255,21 +205,28 @@ namespace SteamDatabase.ValvePak
 				directory = " ";
 			}
 
-			var searchEntry = new PackageEntry
+			/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
+			/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
+			if (Comparer != null)
 			{
-				DirectoryName = directory,
-				FileName = fileName,
-				TypeName = extension,
-			};
+				var searchEntry = new PackageEntry
+				{
+					DirectoryName = directory,
+					FileName = fileName,
+					TypeName = extension,
+				};
 
-			var index = entriesForExtension.BinarySearch(searchEntry, Comparer);
+				var index = entriesForExtension.BinarySearch(searchEntry, Comparer);
 
-			return index < 0 ? null : entriesForExtension[index];
+				return index < 0 ? null : entriesForExtension[index];
+			}
+
+			return entriesForExtension.Find(x => x.DirectoryName == directory && x.FileName == fileName);
 		}
 
 		/// <summary>
 		/// This sorts <see cref="Entries"/> so that it can be searched through using binary search.
-		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntryWithBinarySearch"/> to search case insensitively.
+		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntry"/> to search case insensitively.
 		/// </summary>
 		/// <remarks>
 		/// This is experimental and may be removed in a future release.
