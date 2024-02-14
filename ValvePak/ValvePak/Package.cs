@@ -226,8 +226,9 @@ namespace SteamDatabase.ValvePak
 				return index < 0 ? default : entriesForExtension[index];
 			}
 
-			foreach (var entry in entriesForExtension)
+			for(var i = 0; i < entriesForExtension.Count; i++) // Don't use foreach
 			{
+				var entry = entriesForExtension[i];
 				if (directory.SequenceEqual(entry.DirectoryName) && fileName.SequenceEqual(entry.FileName))
 				{
 					return entry;
