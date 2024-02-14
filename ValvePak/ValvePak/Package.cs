@@ -20,6 +20,7 @@ namespace SteamDatabase.ValvePak
 		/// Always '/' as per Valve's vpk implementation.
 		/// </summary>
 		public const char DirectorySeparatorChar = '/';
+		private const char WindowsDirectorySeparator = '\\';
 
 		private BinaryReader Reader;
 		private readonly Dictionary<int, MemoryMappedFile> MemoryMappedPaks = [];
@@ -175,7 +176,7 @@ namespace SteamDatabase.ValvePak
 			}
 
 			// Normalize path separators when reading the file list
-			filePath = filePath.Replace('\\', DirectorySeparatorChar);
+			filePath = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar);
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
