@@ -181,29 +181,6 @@ namespace SteamDatabase.ValvePak
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
 			var fileName = filePath[(lastSeparator + 1)..];
 
-#pragma warning disable CS0618 // Type or member is obsolete
-			return FindEntry(directory, fileName);
-#pragma warning restore CS0618
-		}
-
-		/// <summary>
-		/// Searches for a given file entry in the file list.
-		/// </summary>
-		/// <param name="directory">Directory to search in.</param>
-		/// <param name="fileName">File name to find.</param>
-		[Obsolete("Use FindEntry(string filePath) overload instead, this method will be removed in the future.")]
-		public PackageEntry FindEntry(string directory, string fileName)
-		{
-			if (directory == null)
-			{
-				throw new ArgumentNullException(nameof(directory));
-			}
-
-			if (fileName == null)
-			{
-				throw new ArgumentNullException(nameof(fileName));
-			}
-
 			var dot = fileName.LastIndexOf('.');
 			string extension;
 
@@ -216,33 +193,6 @@ namespace SteamDatabase.ValvePak
 			{
 				// Valve uses a space for missing extensions
 				extension = " ";
-			}
-
-			return FindEntry(directory, fileName, extension);
-		}
-
-		/// <summary>
-		/// Searches for a given file entry in the file list.
-		/// </summary>
-		/// <param name="directory">Directory to search in.</param>
-		/// <param name="fileName">File name to find, without the extension.</param>
-		/// <param name="extension">File extension, without the leading dot.</param>
-		[Obsolete("Use FindEntry(string filePath) overload instead, this method will be removed in the future.")]
-		public PackageEntry FindEntry(string directory, string fileName, string extension)
-		{
-			if (directory == null)
-			{
-				throw new ArgumentNullException(nameof(directory));
-			}
-
-			if (fileName == null)
-			{
-				throw new ArgumentNullException(nameof(fileName));
-			}
-
-			if (extension == null)
-			{
-				throw new ArgumentNullException(nameof(extension));
 			}
 
 			if (Entries == null || !Entries.TryGetValue(extension, out var entriesForExtension))

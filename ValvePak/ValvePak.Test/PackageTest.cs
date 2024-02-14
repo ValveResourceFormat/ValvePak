@@ -6,8 +6,6 @@ using System.Text;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
-
-#pragma warning disable CS0618 // Type or member is obsolete - FindEntry overloads
 namespace Tests
 {
 	[TestFixture]
@@ -72,37 +70,14 @@ namespace Tests
 			Assert.Multiple(() =>
 			{
 				Assert.That(package.FindEntry("addons\\chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons\\chess\\", "chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons\\chess\\", "chess", "vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("addons/chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons/chess\\", "chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons/chess\\", "chess", "vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons/chess/", "chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("addons/chess/", "chess", "vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("\\addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("\\addons/chess/", "chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("\\addons/chess/", "chess", "vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("/addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("/addons/chess/", "chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-				Assert.That(package.FindEntry("/addons/chess/", "chess", "vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("\\addons/chess/hello_github_reader.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/chess/", "hello_github_reader.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/chess/", "hello_github_reader", "vdf"), Is.Null);
-
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/chess.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/hello_github_reader/", "chess.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/hello_github_reader/", "chess", "vdf"), Is.Null);
-
-				Assert.That(package.FindEntry("\\addons/", "chess/chess.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/", "chess/chess", "vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/", "chess\\chess.vdf"), Is.Null);
-				Assert.That(package.FindEntry("\\addons/", "chess\\chess", "vdf"), Is.Null);
+				Assert.That(package.FindEntry(string.Empty), Is.Null);
+				Assert.That(package.FindEntry(" "), Is.Null);
 			});
 		}
 
@@ -122,9 +97,10 @@ namespace Tests
 				Assert.That(package.FindEntry("addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
 				Assert.That(package.FindEntry("\\addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
 				Assert.That(package.FindEntry("/addons/chess/chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
-
 				Assert.That(package.FindEntry("\\addons/chess/hello_github_reader.vdf"), Is.Null);
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/chess.vdf"), Is.Null);
+				Assert.That(package.FindEntry(string.Empty), Is.Null);
+				Assert.That(package.FindEntry(" "), Is.Null);
 			});
 
 			foreach (var extension in package.Entries.Values)
@@ -177,22 +153,9 @@ namespace Tests
 			Assert.Multiple(() =>
 			{
 				Assert.That(package.FindEntry("kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry(string.Empty, "kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry(string.Empty, "kitten", "jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry(" ", "kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry(" ", "kitten", "jpg")?.CRC32, Is.EqualTo(0x9C800116));
-
 				Assert.That(package.FindEntry("\\kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("\\", "kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("\\", "kitten", "jpg")?.CRC32, Is.EqualTo(0x9C800116));
-
 				Assert.That(package.FindEntry("/kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("/", "kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("/", "kitten", "jpg")?.CRC32, Is.EqualTo(0x9C800116));
-
 				Assert.That(package.FindEntry("\\/kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("\\/\\", "kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-				Assert.That(package.FindEntry("\\\\/", "kitten", "jpg")?.CRC32, Is.EqualTo(0x9C800116));
 			});
 		}
 
@@ -226,11 +189,6 @@ namespace Tests
 			package.Read(path);
 
 			Assert.Throws<ArgumentNullException>(() => package.FindEntry(null));
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry("", null));
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, ""));
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry(null, "", ""));
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry("", null, ""));
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry("", "", null));
 		}
 
 		[Test]
@@ -251,26 +209,11 @@ namespace Tests
 			Assert.Multiple(() =>
 			{
 				Assert.That(package.FindEntry("test")?.CRC32, Is.EqualTo(0x0BA144CC));
-				Assert.That(package.FindEntry("\\/\\", "test")?.CRC32, Is.EqualTo(0x0BA144CC));
-				Assert.That(package.FindEntry("\\\\/", "test")?.CRC32, Is.EqualTo(0x0BA144CC));
-				Assert.That(package.FindEntry("\\\\/", "test", " ")?.CRC32, Is.EqualTo(0x0BA144CC));
-				Assert.That(package.FindEntry(" ", "test")?.CRC32, Is.EqualTo(0x0BA144CC));
-				Assert.That(package.FindEntry(" ", "test", " ")?.CRC32, Is.EqualTo(0x0BA144CC));
-
 				Assert.That(package.FindEntry("folder with space/test")?.CRC32, Is.EqualTo(0xBF108706));
-				Assert.That(package.FindEntry("folder with space", "test")?.CRC32, Is.EqualTo(0xBF108706));
-				Assert.That(package.FindEntry("\\folder with space", "test", " ")?.CRC32, Is.EqualTo(0xBF108706));
-				Assert.That(package.FindEntry("//folder with space//", "test", " ")?.CRC32, Is.EqualTo(0xBF108706));
-
 				Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.CRC32, Is.EqualTo(0x09321FC0));
-				Assert.That(package.FindEntry("/folder with space", "space_extension. txt")?.CRC32, Is.EqualTo(0x09321FC0));
-				Assert.That(package.FindEntry("folder with space/", "space_extension", " txt")?.CRC32, Is.EqualTo(0x09321FC0));
-
 				Assert.That(package.FindEntry("folder with space/file name with space.txt")?.CRC32, Is.EqualTo(0x76D91432));
-
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.CRC32, Is.EqualTo(0x15C1490F));
 				Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.CRC32, Is.EqualTo(0x32CFF012));
-
 				Assert.That(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt"), Is.Null);
 				Assert.That(package.FindEntry("uppercasefolder/UpperCaseFile.txt"), Is.Null);
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT"), Is.Null);
