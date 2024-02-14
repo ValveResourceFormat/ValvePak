@@ -168,15 +168,15 @@ namespace SteamDatabase.ValvePak
 		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
-		public PackageEntry FindEntry(string filePath)
+		public PackageEntry FindEntry(string filePathStr)
 		{
-			if (filePath == null)
+			if (filePathStr == null)
 			{
-				throw new ArgumentNullException(nameof(filePath));
+				throw new ArgumentNullException(nameof(filePathStr));
 			}
 
 			// Normalize path separators when reading the file list
-			filePath = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar);
+			var filePath = filePathStr.Replace(WindowsDirectorySeparator, DirectorySeparatorChar).AsSpan();
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
@@ -187,7 +187,7 @@ namespace SteamDatabase.ValvePak
 
 			if (dot > -1)
 			{
-				extension = fileName[(dot + 1)..];
+				extension = fileName[(dot + 1)..].ToString();
 				fileName = fileName[..dot];
 			}
 			else
@@ -198,7 +198,7 @@ namespace SteamDatabase.ValvePak
 
 			if (Entries == null || !Entries.TryGetValue(extension, out var entriesForExtension))
 			{
-				return null;
+				return default;
 			}
 
 			// Remove the trailing slash
@@ -216,17 +216,25 @@ namespace SteamDatabase.ValvePak
 			{
 				var searchEntry = new PackageEntry
 				{
-					DirectoryName = directory,
-					FileName = fileName,
+					DirectoryName = directory.ToString(),
+					FileName = fileName.ToString(),
 					TypeName = extension,
 				};
 
 				var index = entriesForExtension.BinarySearch(searchEntry, Comparer);
 
-				return index < 0 ? null : entriesForExtension[index];
+				return index < 0 ? default : entriesForExtension[index];
 			}
 
-			return entriesForExtension.Find(x => x.DirectoryName == directory && x.FileName == fileName);
+			foreach (var entry in entriesForExtension)
+			{
+				if (directory.SequenceEqual(entry.DirectoryName) && fileName.SequenceEqual(entry.FileName))
+				{
+					return entry;
+				}
+			}
+
+			return default;
 		}
 
 		/// <summary>
