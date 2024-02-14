@@ -33,10 +33,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="input">The input <see cref="Stream"/> to read from.</param>
 		public void Read(Stream input)
 		{
-			if (input == null)
-			{
-				throw new ArgumentNullException(nameof(input));
-			}
+			ArgumentNullException.ThrowIfNull(input);
 
 			if (FileName == null)
 			{
@@ -96,11 +93,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
-			// TODO: Add overload to read into existing byte array (ArrayPool)
-			if (entry == null)
-			{
-				throw new ArgumentNullException(nameof(entry));
-			}
+			ArgumentNullException.ThrowIfNull(entry);
 
 			output = new byte[entry.TotalLength];
 
@@ -115,7 +108,10 @@ namespace SteamDatabase.ValvePak
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
 		public void ReadEntry(PackageEntry entry, byte[] output, bool validateCrc = true)
 		{
-			var totalLength = (int)entry.TotalLength;
+            ArgumentNullException.ThrowIfNull(entry);
+            ArgumentNullException.ThrowIfNull(output);
+
+            var totalLength = (int)entry.TotalLength;
 
 			if (output.Length < totalLength)
 			{
@@ -129,11 +125,12 @@ namespace SteamDatabase.ValvePak
 
 			if (entry.Length > 0)
 			{
-				Stream fs = null;
+#pragma warning disable CA2000 // Dispose objects before losing scope
+				var fs = GetFileStream(entry.ArchiveIndex);
+#pragma warning restore CA2000 // Stream is base reader stream when reading from non-split vpk, it should not be disposed
 
 				try
 				{
-					fs = GetFileStream(entry.ArchiveIndex);
 					fs.Seek(entry.Offset, SeekOrigin.Current);
 
 					int length = (int)entry.Length;
@@ -147,9 +144,9 @@ namespace SteamDatabase.ValvePak
 				}
 				finally
 				{
-					if (entry.ArchiveIndex != 0x7FFF)
+                    if (entry.ArchiveIndex != 0x7FFF)
 					{
-						fs?.Close();
+						fs.Dispose();
 					}
 				}
 			}
@@ -356,8 +353,10 @@ namespace SteamDatabase.ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
-		{
-			if (entry.Length <= 4096 || entry.SmallData.Length > 0)
+        {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            if (entry.Length <= 4096 || entry.SmallData.Length > 0)
 			{
 				ReadEntry(entry, out var output, false);
 				return new MemoryStream(output);

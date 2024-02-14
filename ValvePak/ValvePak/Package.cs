@@ -141,10 +141,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="fileName">Filename.</param>
 		public void SetFileName(string fileName)
 		{
-			if (fileName == null)
-			{
-				throw new ArgumentNullException(nameof(fileName));
-			}
+			ArgumentNullException.ThrowIfNull(fileName);
 
 			if (fileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
 			{
@@ -170,10 +167,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="filePath">Full path to the file to find.</param>
 		public PackageEntry FindEntry(string filePathStr)
 		{
-			if (filePathStr == null)
-			{
-				throw new ArgumentNullException(nameof(filePathStr));
-			}
+			ArgumentNullException.ThrowIfNull(filePathStr);
 
 			// Normalize path separators when reading the file list
 			var filePath = filePathStr.Replace(WindowsDirectorySeparator, DirectorySeparatorChar).AsSpan();

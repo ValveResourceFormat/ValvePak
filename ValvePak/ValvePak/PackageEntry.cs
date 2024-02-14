@@ -5,6 +5,9 @@ namespace SteamDatabase.ValvePak
 		/// <summary>
 		/// Gets or sets file name of this entry.
 		/// </summary>
+		/// <remarks>
+		/// This does not contain <see cref="TypeName"/>.
+		/// </remarks>
 		public string FileName { get; set; }
 
 		/// <summary>

@@ -10,9 +10,11 @@ namespace SteamDatabase.ValvePak
 	/// </summary>
 	public partial class Package : IDisposable
 	{
-		class SubStream : Stream
-		{
+		sealed class SubStream : Stream, IDisposable
+        {
+#pragma warning disable CA2213 // Disposable fields should be disposed
 			private readonly Stream baseStream;
+#pragma warning restore CA2213
 			private readonly long length;
 			private long position;
 			public SubStream(Stream baseStream, long offset, long length)
@@ -71,25 +73,24 @@ namespace SteamDatabase.ValvePak
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
-			using var md5 = MD5.Create();
-			var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
-			var hash = md5.ComputeHash(subStream);
+			using var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
+			var hash = MD5.HashData(subStream);
 
 			if (!hash.SequenceEqual(TreeChecksum))
 			{
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
 
-			subStream = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
-			hash = md5.ComputeHash(subStream);
+			using var subStream2 = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
+			hash = MD5.HashData(subStream2);
 
 			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
 			{
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}
 
-			subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
-			hash = md5.ComputeHash(subStream);
+			using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+			hash = MD5.HashData(subStream3);
 
 			if (!hash.SequenceEqual(WholeFileChecksum))
 			{
@@ -103,7 +104,6 @@ namespace SteamDatabase.ValvePak
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyChunkHashes(IProgress<string> progressReporter = null)
 		{
-			using var md5 = MD5.Create();
 			Stream stream = null;
 			var lastArchiveIndex = uint.MaxValue;
 
@@ -141,8 +141,8 @@ namespace SteamDatabase.ValvePak
 						stream.Seek(offset, SeekOrigin.Begin);
 					}
 
-					var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
-					var hash = md5.ComputeHash(subStream);
+					using var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
+					var hash = MD5.HashData(subStream);
 
 					if (!hash.SequenceEqual(entry.Checksum))
 					{
@@ -198,7 +198,7 @@ namespace SteamDatabase.ValvePak
 			using var rsa = RSA.Create();
 			rsa.ImportSubjectPublicKeyInfo(PublicKey, out _);
 
-			var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeSignature);
+			using var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeSignature);
 
 			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 		}

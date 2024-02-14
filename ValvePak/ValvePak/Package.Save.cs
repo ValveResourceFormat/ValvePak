@@ -17,6 +17,8 @@ namespace SteamDatabase.ValvePak
 		/// <returns>Returns true if entry was removed, false otherwise.</returns>
 		public bool RemoveFile(PackageEntry entry)
 		{
+			ArgumentNullException.ThrowIfNull(entry);
+
 			if (!Entries.TryGetValue(entry.TypeName, out var typeEntries))
 			{
 				return false;
@@ -40,6 +42,8 @@ namespace SteamDatabase.ValvePak
 		/// <returns>The added entry.</returns>
 		public PackageEntry AddFile(string filePath, byte[] fileData)
 		{
+			ArgumentNullException.ThrowIfNull(filePath);
+
 			filePath = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar);
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
@@ -115,6 +119,8 @@ namespace SteamDatabase.ValvePak
 			{
 				throw new InvalidOperationException("This package was opened from a _dir.vpk, writing back is currently unsupported.");
 			}
+
+			ArgumentNullException.ThrowIfNull(stream);
 
 			if (!stream.CanSeek || !stream.CanRead)
 			{
@@ -240,7 +246,6 @@ namespace SteamDatabase.ValvePak
 				// TODO: It is possible to transform these hashes while writing the file to remove seeking and stream reading
 				using var fileTreeMD5 = MD5.Create();
 				using var fullFileMD5 = MD5.Create();
-				using var hashesMD5 = MD5.Create();
 
 				stream.Read(buffer, 0, headerSize);
 				fullFileMD5.TransformBlock(buffer, 0, headerSize, null, 0);
@@ -276,7 +281,7 @@ namespace SteamDatabase.ValvePak
 				fullFileMD5.TransformBlock(fileTreeMD5.Hash, 0, fileTreeMD5.Hash.Length, null, 0);
 
 				// File hashes hash
-				var fileHashesMD5 = hashesMD5.ComputeHash([]); // We did not write any file hashes
+				var fileHashesMD5 = MD5.HashData([]); // We did not write any file hashes
 				writer.Write(fileHashesMD5);
 
 				// Full file hash

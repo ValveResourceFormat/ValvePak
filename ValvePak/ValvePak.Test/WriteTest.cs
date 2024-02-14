@@ -91,7 +91,7 @@ namespace Tests
 			package.AddFile("test2.txt", []);
 			package.AddFile("test3.txt", []);
 			package.AddFile("test4.txt", []);
-#pragma warning disable NUnit2045 // Use Assert.Multiple
+
 			Assert.That(package.Entries.ContainsKey("txt"), Is.True);
 			Assert.That(package.Entries["txt"], Has.Count.EqualTo(4));
 			Assert.That(package.RemoveFile(package.FindEntry("test2.txt")), Is.True);
@@ -107,7 +107,6 @@ namespace Tests
 			Assert.That(package.RemoveFile(package.FindEntry("test3.txt")), Is.True);
 			Assert.That(package.RemoveFile(package.FindEntry("test1.txt")), Is.True);
 			Assert.That(package.Entries, Is.Empty);
-#pragma warning restore NUnit2045
 		}
 
 		[Test]

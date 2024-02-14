@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace SteamDatabase.ValvePak
 {
-	class CaseInsensitivePackageEntryComparer(StringComparison comparison) : IComparer<PackageEntry>
+	sealed class CaseInsensitivePackageEntryComparer(StringComparison comparison) : IComparer<PackageEntry>
 	{
 		public StringComparison Comparison { get; } = comparison;
 
