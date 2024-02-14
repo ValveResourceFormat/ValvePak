@@ -12,6 +12,10 @@ namespace SteamDatabase.ValvePak
 	{
 		public const int MAGIC = 0x55AA1234;
 
+		internal const string Space = " ";
+		internal const string Dot = ".";
+		internal const string DirectorySeparator = "/";
+
 		/// <summary>
 		/// Always '/' as per Valve's vpk implementation.
 		/// </summary>
@@ -188,7 +192,7 @@ namespace SteamDatabase.ValvePak
 			else
 			{
 				// Valve uses a space for missing extensions
-				extension = " ";
+				extension = Space;
 			}
 
 			if (Entries == null || !Entries.TryGetValue(extension, out var entriesForExtension))
@@ -202,7 +206,7 @@ namespace SteamDatabase.ValvePak
 			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
 			if (directory.Length == 0)
 			{
-				directory = " ";
+				directory = Space;
 			}
 
 			/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.

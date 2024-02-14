@@ -57,12 +57,12 @@ namespace SteamDatabase.ValvePak
 			else
 			{
 				// Valve uses a space for missing extensions
-				extension = " ";
+				extension = Space;
 			}
 
 			if (directory.Length == 0)
 			{
-				directory = " ";
+				directory = Space;
 			}
 
 			// Putting file data into SmallData is kind of a hack
@@ -137,7 +137,7 @@ namespace SteamDatabase.ValvePak
 
 				foreach (var entry in typeEntries.Value)
 				{
-					var directoryName = entry.DirectoryName.Length == 0 ? " " : entry.DirectoryName;
+					var directoryName = entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
 
 					if (!typeTree.TryGetValue(directoryName, out var directoryEntries))
 					{
