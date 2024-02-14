@@ -195,7 +195,7 @@ namespace SteamDatabase.ValvePak
 				return default;
 			}
 
-			// Remove the trailing slash
+			// Remove the trailing and leading slash
 			directory = directory.Trim(DirectorySeparatorChar);
 
 			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
@@ -204,28 +204,64 @@ namespace SteamDatabase.ValvePak
 				directory = Space;
 			}
 
-			/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
-			/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
-			if (Comparer != null)
+			int hi = entriesForExtension.Count - 1;
+
+			if (Comparer == null)
 			{
-				var searchEntry = new PackageEntry
+				for (var i = 0; i <= hi; i++) // Don't use foreach
 				{
-					DirectoryName = directory.ToString(),
-					FileName = fileName.ToString(),
-					TypeName = extension,
-				};
+					var entry = entriesForExtension[i];
+					if (directory.SequenceEqual(entry.DirectoryName) && fileName.SequenceEqual(entry.FileName))
+					{
+						return entry;
+					}
+				}
 
-				var index = entriesForExtension.BinarySearch(searchEntry, Comparer);
-
-				return index < 0 ? default : entriesForExtension[index];
+				return default;
 			}
 
-			for(var i = 0; i < entriesForExtension.Count; i++) // Don't use foreach
+			/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
+			/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
+			///
+			/// Manually implement binary search to avoid allocating new strings for file and directory names.
+			/// See <see cref="MemoryExtensions.BinarySearch{T}(ReadOnlySpan{T}, IComparable{T})"/> for reference.
+
+			int lo = 0;
+
+			while (lo <= hi)
 			{
+				var i = (int)(((uint)hi + (uint)lo) >> 1);
 				var entry = entriesForExtension[i];
-				if (directory.SequenceEqual(entry.DirectoryName) && fileName.SequenceEqual(entry.FileName))
+
+				/// This code must match <see cref="CaseInsensitivePackageEntryComparer.Compare(PackageEntry, PackageEntry)"/>
+				var comp = fileName.Length.CompareTo(entry.FileName.Length);
+
+				if (comp == 0)
+				{
+					comp = directory.Length.CompareTo(entry.DirectoryName.Length);
+
+					if (comp == 0)
+					{
+						comp = fileName.CompareTo(entry.FileName, Comparer.Comparison);
+
+						if (comp == 0)
+						{
+							comp = directory.CompareTo(entry.DirectoryName, Comparer.Comparison);
+						}
+					}
+				}
+
+				if (comp == 0)
 				{
 					return entry;
+				}
+				else if (comp > 0)
+				{
+					lo = i + 1;
+				}
+				else
+				{
+					hi = i - 1;
 				}
 			}
 
