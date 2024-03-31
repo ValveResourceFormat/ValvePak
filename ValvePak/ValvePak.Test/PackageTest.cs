@@ -241,21 +241,6 @@ namespace Tests
 		}
 
 		[Test]
-		public void ThrowsOnExternalFilesNotInDirVpk()
-		{
-			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
-			using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-			using var package = new Package();
-			package.SetFileName("test.vpk");
-			package.Read(fs);
-
-			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
-			Assert.That(file.CRC32, Is.EqualTo(0x32CFF012));
-			Assert.Throws<InvalidOperationException>(() => package.ReadEntry(file, out _));
-		}
-
-		[Test]
 		public void ThrowsOnInvalidEntryTerminator()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "invalid_terminator.vpk");
@@ -359,6 +344,14 @@ namespace Tests
 		public void ExtractDirVPK()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_dir.vpk");
+
+			TestVPKExtraction(path);
+		}
+
+		[Test]
+		public void ExtractDirVPKWithoutSuffix()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_without_suffix.vpk");
 
 			TestVPKExtraction(path);
 		}

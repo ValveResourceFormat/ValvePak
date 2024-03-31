@@ -324,12 +324,7 @@ namespace SteamDatabase.ValvePak
 
 			if (archiveIndex != 0x7FFF)
 			{
-				if (!IsDirVPK)
-				{
-					throw new InvalidOperationException("Given VPK filename does not end in '_dir.vpk', but entry is referencing an external archive.");
-				}
-
-				var fileName = $"{FileName}_{archiveIndex:D3}.vpk";
+				var fileName = GetArchiveIndexFullFilePath(archiveIndex);
 
 				stream = new FileStream(fileName, FileMode.Open, FileAccess.Read);
 			}
@@ -383,7 +378,7 @@ namespace SteamDatabase.ValvePak
 				}
 				else
 				{
-					path = $"{FileName}_{entry.ArchiveIndex:D3}.vpk";
+					path = GetArchiveIndexFullFilePath(entry.ArchiveIndex);
 				}
 
 				stream = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
@@ -398,6 +393,12 @@ namespace SteamDatabase.ValvePak
 			}
 
 			return stream.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		private string GetArchiveIndexFullFilePath(ushort archiveIndex)
+		{
+			return $"{FileName}_{archiveIndex:D3}.vpk";
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
