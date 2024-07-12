@@ -101,31 +101,26 @@ namespace SteamDatabase.ValvePak
 		/// Opens and writes the given filename.
 		/// </summary>
 		/// <param name="filename">The file to open and write.</param>
-		public void Write(string filename)
+		public void Write(string filename, int maxFileBytes = int.MaxValue)
 		{
-			using var fs = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+			ArgumentOutOfRangeException.ThrowIfNegative(maxFileBytes);
+
+			using var fs = new FileStream(filename, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
 			fs.SetLength(0);
 
-			Write(fs);
+			Write(fs, maxFileBytes);
 		}
 
 		/// <summary>
 		/// Writes to the given <see cref="Stream"/>.
 		/// </summary>
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
-		public void Write(Stream stream)
+		public void Write(FileStream stream, int maxFileBytes)
 		{
-			if (IsDirVPK)
-			{
-				throw new InvalidOperationException("This package was opened from a _dir.vpk, writing back is currently unsupported.");
-			}
-
 			ArgumentNullException.ThrowIfNull(stream);
 
 			if (!stream.CanSeek || !stream.CanRead)
-			{
 				throw new InvalidOperationException("Stream must be seekable and readable.");
-			}
 
 			using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
 
@@ -143,6 +138,9 @@ namespace SteamDatabase.ValvePak
 
 				foreach (var entry in typeEntries.Value)
 				{
+					if (entry.TotalLength >= maxFileBytes)
+						throw new InvalidOperationException("There are files exceeding max file bytes");
+
 					var directoryName = entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
 
 					if (!typeTree.TryGetValue(directoryName, out var directoryEntries))
@@ -154,13 +152,13 @@ namespace SteamDatabase.ValvePak
 					directoryEntries.Add(entry);
 
 					fileDataSectionSize += entry.TotalLength;
-
-					if (fileDataSectionSize > int.MaxValue)
-					{
-						throw new InvalidOperationException("Package contents exceed 2GiB, and splitting packages is currently unsupported.");
-					}
 				}
 			}
+
+			ulong packetCount = (fileDataSectionSize / Convert.ToUInt64(maxFileBytes)) + Convert.ToUInt64(fileDataSectionSize % Convert.ToUInt64(maxFileBytes) == 0 ? 0 : 1);
+			if (packetCount >= 0x7FFF)
+				throw new InvalidOperationException("The number of packages exceeds 32766");
+
 
 			// Header
 			writer.Write(MAGIC);
@@ -168,7 +166,7 @@ namespace SteamDatabase.ValvePak
 			writer.Write(0); // TreeSize, to be updated later
 			writer.Write(0); // FileDataSectionSize, to be updated later
 			writer.Write(0); // ArchiveMD5SectionSize
-			writer.Write(48); // OtherMD5SectionSize
+			writer.Write(48); //OtherMD5SectionSize
 			writer.Write(0); // SignatureSectionSize
 
 			var headerSize = (int)(stream.Position - streamOffset);
@@ -176,55 +174,167 @@ namespace SteamDatabase.ValvePak
 
 			const byte NullByte = 0;
 
-			// File tree data
-			foreach (var typeEntries in tree)
+			long fileTreeSize;
+			if (packetCount == 1)
 			{
-				writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
-				writer.Write(NullByte);
-
-				foreach (var directoryEntries in typeEntries.Value)
+				ushort archiveIndex = 0x7FFF;
+				// File tree data
+				foreach (var typeEntries in tree)
 				{
-					writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
+					writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
 					writer.Write(NullByte);
 
-					foreach (var entry in directoryEntries.Value)
+					foreach (var directoryEntries in typeEntries.Value)
 					{
-						var fileLength = entry.TotalLength;
-
-						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
+						writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
 						writer.Write(NullByte);
-						writer.Write(entry.CRC32);
-						writer.Write((short)0); // SmallData, we will put it into data instead
-						writer.Write(entry.ArchiveIndex);
-						writer.Write(fileOffset);
-						writer.Write(fileLength);
-						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
 
-						fileOffset += fileLength;
+						foreach (var entry in directoryEntries.Value)
+						{
+							var fileLength = entry.TotalLength;
+
+							writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
+							writer.Write(NullByte);
+							writer.Write(entry.CRC32);
+							writer.Write((short)0); // SmallData, we will put it into data instead
+							writer.Write(archiveIndex);
+							writer.Write(fileOffset);
+							writer.Write(fileLength);
+							writer.Write(ushort.MaxValue); // terminator, 0xFFFF
+
+							fileOffset += fileLength;
+						}
+
+						writer.Write(NullByte);
 					}
 
 					writer.Write(NullByte);
 				}
 
 				writer.Write(NullByte);
-			}
 
-			writer.Write(NullByte);
+				fileTreeSize = stream.Position - headerSize;
 
-			var fileTreeSize = stream.Position - headerSize;
-
-			// File data
-			foreach (var typeEntries in tree)
-			{
-				foreach (var directoryEntries in typeEntries.Value)
+				// File data
+				foreach (var typeEntries in tree)
 				{
-					foreach (var entry in directoryEntries.Value)
+					foreach (var directoryEntries in typeEntries.Value)
 					{
-						ReadEntry(entry, out var fileData, validateCrc: false);
+						foreach (var entry in directoryEntries.Value)
+						{
+							ReadEntry(entry, out var fileData, validateCrc: false);
 
-						writer.Write(fileData);
+							writer.Write(fileData);
+						}
 					}
 				}
+			}
+			else
+			{
+				var trees = new List<Dictionary<string, Dictionary<string, List<PackageEntry>>>>();
+				Dictionary<string, Dictionary<string, List<PackageEntry>>> activeTree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
+				trees.Add(activeTree);
+				uint totalLength = 0;
+
+				ushort archiveIndex = 0;
+				foreach (var typeEntries in tree)
+				{
+					writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
+					writer.Write(NullByte);
+
+					Dictionary<string, List<PackageEntry>> activeTree2 = new Dictionary<string, List<PackageEntry>>();
+					activeTree[typeEntries.Key] = activeTree2;
+					foreach (var directoryEntries in typeEntries.Value)
+					{
+						writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
+						writer.Write(NullByte);
+
+						List<PackageEntry> entries = new List<PackageEntry>();
+						activeTree2[directoryEntries.Key] = entries;
+						foreach (var entry in directoryEntries.Value)
+						{
+							if (totalLength + entry.TotalLength >= maxFileBytes)
+							{
+								if (entries.Count == 0)
+								{
+									activeTree2.Remove(directoryEntries.Key);
+									if (activeTree2.Count == 0)
+										activeTree.Remove(typeEntries.Key);
+
+									if (activeTree.Count == 0)
+										trees.Remove(activeTree);
+								}
+
+								activeTree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
+								trees.Add(activeTree);
+								activeTree2 = new Dictionary<string, List<PackageEntry>>();
+								activeTree[typeEntries.Key] = activeTree2;
+								entries = new List<PackageEntry>();
+								activeTree2[directoryEntries.Key] = entries;
+								entries.Add(entry);
+								totalLength = entry.TotalLength;
+								archiveIndex++;
+								fileOffset = 0;
+							}
+							else
+							{
+								totalLength += entry.TotalLength;
+								entries.Add(entry);
+							}
+
+							var fileLength = entry.TotalLength;
+
+							writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
+							writer.Write(NullByte);
+							writer.Write(entry.CRC32);
+							writer.Write((short)0); // SmallData, we will put it into data instead
+							writer.Write(archiveIndex);
+							writer.Write(fileOffset);
+							writer.Write(fileLength);
+							writer.Write(ushort.MaxValue); // terminator, 0xFFFF
+
+							fileOffset += fileLength;
+						}
+						writer.Write(NullByte);
+					}
+					writer.Write(NullByte);
+				}
+				writer.Write(NullByte);
+
+				fileTreeSize = stream.Position - headerSize;
+
+				for (ushort i = 0; i < trees.Count; i++)
+				{
+					long testtotalSize = 0;
+					archiveIndex = i;
+					Dictionary<string, Dictionary<string, List<PackageEntry>>> _tree = trees[i];
+
+					string filename = stream.Name;
+					FileInfo sub_FileInfo = new FileInfo(filename);
+
+					string sub_FileName = Path.GetFileNameWithoutExtension(sub_FileInfo.FullName);
+					if (sub_FileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase))
+						sub_FileName = $"{sub_FileName[..^4]}";
+
+					sub_FileName = $"{sub_FileName}_{archiveIndex:D3}";
+					string sub_FilePath = $"{sub_FileInfo.Directory}\\{sub_FileName}{sub_FileInfo.Extension}";
+					using var fs = new FileStream(sub_FilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+					using var writer_sub = new BinaryWriter(fs, Encoding.UTF8, leaveOpen: true);
+					// File data
+					foreach (var typeEntries in _tree)
+					{
+						foreach (var directoryEntries in typeEntries.Value)
+						{
+							foreach (var entry in directoryEntries.Value)
+							{
+								ReadEntry(entry, out var fileData, validateCrc: false);
+								testtotalSize += fileData.LongLength;
+								writer_sub.Write(fileData);
+							}
+						}
+					}
+				}
+
 			}
 
 			var afterFileData = stream.Position;
@@ -293,5 +403,6 @@ namespace SteamDatabase.ValvePak
 				ArrayPool<byte>.Shared.Return(buffer);
 			}
 		}
+
 	}
 }
