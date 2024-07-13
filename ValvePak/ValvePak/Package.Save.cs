@@ -9,10 +9,17 @@ using System.IO.Hashing;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace SteamDatabase.ValvePak
 {
+	internal sealed class WriteEntry(ushort archiveIndex, uint fileOffset, PackageEntry entry)
+	{
+		internal ushort ArchiveIndex { get; set; } = archiveIndex;
+		internal uint FileOffset { get; set; } = fileOffset;
+		internal PackageEntry Entry { get; set; } = entry;
+	}
 	public partial class Package
 	{
 		/// <summary>
@@ -122,6 +129,7 @@ namespace SteamDatabase.ValvePak
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
 		public void Write(FileStream stream, int maxFileBytes)
 		{
+
 			ArgumentNullException.ThrowIfNull(stream);
 
 			if (!stream.CanSeek || !stream.CanRead)
@@ -132,11 +140,33 @@ namespace SteamDatabase.ValvePak
 			// TODO: input.SetLength()
 			var streamOffset = stream.Position;
 
-			var _trees = CreatePacketsGroup(Entries, maxFileBytes);
+			List<PackageEntry> entries = Entries.SelectMany(e => e.Value).ToList();
 
-			if (_trees.Count >= 0x7FFF)
-				throw new InvalidOperationException("The number of packages exceeds 32766");
+			if (entries.Any(e => e.TotalLength > maxFileBytes))
+				throw new InvalidOperationException("There are files exceeding max file bytes");
 
+
+			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
+
+			// Precalculate the file tree and set data offsets
+			foreach (var typeEntries in Entries)
+			{
+				var typeTree = new Dictionary<string, List<PackageEntry>>();
+				tree[typeEntries.Key] = typeTree;
+
+				foreach (var entry in typeEntries.Value)
+				{
+					var directoryName = entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
+
+					if (!typeTree.TryGetValue(directoryName, out var directoryEntries))
+					{
+						directoryEntries = [];
+						typeTree[directoryName] = directoryEntries;
+					}
+
+					directoryEntries.Add(entry);
+				}
+			}
 
 			// Header
 			writer.Write(MAGIC);
@@ -147,140 +177,102 @@ namespace SteamDatabase.ValvePak
 			writer.Write(48); //OtherMD5SectionSize
 			writer.Write(0); // SignatureSectionSize
 			var headerSize = (int)(stream.Position - streamOffset);
-			uint fileOffset = 0;
 			const byte NullByte = 0;
-			long fileTreeSize;
 
-			if (_trees.Count == 1)
+			bool isSingleFile = entries.Sum(s => s.TotalLength) + headerSize + 64 <= maxFileBytes;
+
+			var groups = CreatePacketsGroup(entries, maxFileBytes, isSingleFile);
+
+			if (groups.Count >= 0x7FFF)
+				throw new InvalidOperationException("The number of packages exceeds 32766");
+
+
+			uint fileOffset = 0;
+			foreach (var typeEntries in tree)
 			{
-				var tree = _trees[0];
-				ushort archiveIndex = 0x7FFF;
-				// File tree data
-				foreach (var typeEntries in tree)
+				writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
+				writer.Write(NullByte);
+
+				foreach (var directoryEntries in typeEntries.Value)
 				{
-					writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
+					writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
 					writer.Write(NullByte);
 
-					foreach (var directoryEntries in typeEntries.Value)
+					foreach (var entry in directoryEntries.Value)
 					{
-						writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
-						writer.Write(NullByte);
+						var fileLength = entry.TotalLength;
 
-						foreach (var entry in directoryEntries.Value)
+						var fullPath = entry.GetFullPath();
+						WriteEntry writeEntry = null;
+
+						foreach (var group in groups)
 						{
-							var fileLength = entry.TotalLength;
-
-							writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
-							writer.Write(NullByte);
-							writer.Write(entry.CRC32);
-							writer.Write((short)0); // SmallData, we will put it into data instead
-							writer.Write(archiveIndex);
-							writer.Write(fileOffset);
-							writer.Write(fileLength);
-							writer.Write(ushort.MaxValue); // terminator, 0xFFFF
-
-							fileOffset += fileLength;
+							if (group.TryGetValue(fullPath, out writeEntry))
+								break;
 						}
+						if (writeEntry is null)
+							throw new InvalidOperationException("No need write entry found");
 
+
+						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
 						writer.Write(NullByte);
+						writer.Write(entry.CRC32);
+						writer.Write((short)0); // SmallData, we will put it into data instead
+						writer.Write(writeEntry.ArchiveIndex);
+						writer.Write(writeEntry.FileOffset);
+						writer.Write(fileLength);
+						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
+
+						fileOffset += fileLength;
 					}
 
 					writer.Write(NullByte);
 				}
 
 				writer.Write(NullByte);
+			}
 
+			writer.Write(NullByte);
 
-				// File data
-				foreach (var typeEntries in tree)
+			//clear sub file
+			for (ushort i = 0; i < 999; i++)
+			{
+				string sub_FilePath = GetSubFilePath(stream.Name, i);
+				if (File.Exists(sub_FilePath))
+					File.Delete(sub_FilePath);
+			}
+
+			if (isSingleFile)
+			{
+				//Write file data
+				foreach (var writeEntry in groups[0].Values)
 				{
-					foreach (var directoryEntries in typeEntries.Value)
-					{
-						foreach (var entry in directoryEntries.Value)
-						{
-							ReadEntry(entry, out var fileData, validateCrc: false);
-							writer.Write(fileData);
-						}
-					}
+					ReadEntry(writeEntry.Entry, out var fileData, validateCrc: false);
+					writer.Write(fileData);
 				}
 			}
 			else
 			{
-				for (ushort i = 0; i < 999; i++)
+				//Create and write sub file data
+				for (ushort i = 0; i < groups.Count; i++)
 				{
 					string sub_FilePath = GetSubFilePath(stream.Name, i);
-					if (File.Exists(sub_FilePath))
-						File.Delete(sub_FilePath);
-				}
-				for (ushort i = 0; i < _trees.Count; i++)
-				{
-					var tree = _trees[i];
 
-					string sub_FilePath = GetSubFilePath(stream.Name,i);
-					
 					using var fs = new FileStream(sub_FilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
 					using var writer_sub = new BinaryWriter(fs, Encoding.UTF8, leaveOpen: true);
 
-					fileOffset = 0;
-					foreach (var fileType in tree.Keys)
+					var group = groups[i];
+					foreach (var writeEntry in group.Values)
 					{
-						//如果是一种类型的开头
-						if (IsTypeHead(fileType, i, _trees))
-						{
-							writer.Write(Encoding.UTF8.GetBytes(fileType));
-							writer.Write(NullByte);
-						}
-
-						var dics = tree[fileType];
-						foreach (var dicName in dics.Keys)
-						{
-							//如果是一类地址的开头
-							if (IsDirectoryHead(fileType, dicName, i, _trees))
-							{
-								writer.Write(Encoding.UTF8.GetBytes(dicName));
-								writer.Write(NullByte);
-							}
-
-							var entries = dics[dicName];
-							foreach (var entry in entries)
-							{
-								if (entry.FileName == "odest_spawn_02")
-								{
-									Debug.Write(1);
-								}
-								var fileLength = entry.TotalLength;
-								writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
-								writer.Write(NullByte);
-								writer.Write(entry.CRC32);
-								writer.Write((short)0); // SmallData, we will put it into data instead
-								writer.Write(i);
-								writer.Write(fileOffset);
-								writer.Write(fileLength);
-								writer.Write(ushort.MaxValue); // terminator, 0xFFFF
-
-								fileOffset += fileLength;
-
-								ReadEntry(entry, out var fileData, validateCrc: false);
-								writer_sub.Write(fileData);
-							}
-
-							//如果是一类地址的结尾
-							if (IsDirectoryTail(fileType, dicName, i, _trees))
-								writer.Write(NullByte);
-						}
-
-						//如果是一种类型的结尾
-						if (IsTypeTail(fileType, i, _trees))
-							writer.Write(NullByte);
-
+						ReadEntry(writeEntry.Entry, out var fileData, validateCrc: false);
+						writer_sub.Write(fileData);
 					}
 				}
 
-				writer.Write(NullByte);
-				fileTreeSize = stream.Position - headerSize;
 			}
 
-			fileTreeSize = stream.Position - headerSize;
+
+			long fileTreeSize = stream.Position - headerSize;
 
 
 			var afterFileData = stream.Position;
@@ -350,7 +342,13 @@ namespace SteamDatabase.ValvePak
 			}
 		}
 
-		static string GetSubFilePath(string indexFilePath,ushort indexNumber)
+		/// <summary>
+		/// Get the sub file name
+		/// </summary>
+		/// <param name="indexFilePath">Index file path</param>
+		/// <param name="indexNumber">Index number</param>
+		/// <returns></returns>
+		static string GetSubFilePath(string indexFilePath, ushort indexNumber)
 		{
 			FileInfo sub_FileInfo = new FileInfo(indexFilePath);
 
@@ -363,153 +361,56 @@ namespace SteamDatabase.ValvePak
 		}
 
 		/// <summary>
-		/// Determine if it is located at the beginning of a set of file types
-		/// </summary>
-		/// <param name="fileType">Current file type</param>
-		/// <param name="treeIndex">Current tree index</param>
-		/// <param name="trees">Tree list</param>
-		/// <returns>Is located at the beginning of a set of files</returns>
-		static bool IsTypeHead(string fileType, ushort treeIndex, List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> trees)
-		{
-			var tree = trees[treeIndex];
-			if (treeIndex == 0)
-				return true;
-
-			if (fileType == tree.Keys.First())
-				return trees[treeIndex - 1].Keys.Last() != fileType;
-			else
-				return true;
-
-		}
-		/// <summary>
-		/// Determine if it is located at the end of a set of file types
-		/// </summary>
-		/// <param name="fileType">Current file type</param>
-		/// <param name="treeIndex">Current tree index</param>
-		/// <param name="trees">Tree list</param>
-		/// <returns>Is located at the end of a set of files</returns>
-		static bool IsTypeTail(string fileType, ushort treeIndex, List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> trees)
-		{
-			if (treeIndex == trees.Count - 1)
-				return true;
-
-			var tree = trees[treeIndex];
-			if (fileType == tree.Keys.Last())
-				return trees[treeIndex + 1].Keys.First() != fileType;
-			else
-				return true;
-
-		}
-
-		/// <summary>
-		/// Determine if it is located at the beginning of a set of folder addresses
-		/// </summary>
-		/// <param name="fileType">Current file type</param>
-		/// <param name="dicName">Current directory path</param>
-		/// <param name="treeIndex">Current tree index</param>
-		/// <param name="trees">Tree list</param>
-		/// <returns>Is located at the beginning of a set of folder addresses</returns>
-		static bool IsDirectoryHead(string fileType, string dicName, ushort treeIndex, List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> trees)
-		{
-			if (treeIndex == 0)
-				return true;
-
-			var tree = trees[treeIndex];
-
-			if (dicName == tree.Values.First().Keys.First() && fileType == tree.Keys.First())
-				return trees[treeIndex - 1].Keys.Last() != fileType && trees[treeIndex - 1].Values.Last().Keys.Last() != dicName;
-			else
-				return true;
-		}
-
-		/// <summary>
-		/// Determine if it is located at the end of a set of folder addresses
-		/// </summary>
-		/// <param name="fileType">Current file type</param>
-		/// <param name="dicName">Current directory path</param>
-		/// <param name="treeIndex">Current tree index</param>
-		/// <param name="trees">Tree list</param>
-		/// <returns>Is located at the end of a set of folder addresses</returns>
-		static bool IsDirectoryTail(string fileType, string dicName, ushort treeIndex, List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> trees)
-		{
-			if (treeIndex == trees.Count - 1)
-				return true;
-
-			var tree = trees[treeIndex];
-			if (fileType == tree.Keys.Last() && dicName == tree.Values.Last().Keys.Last())
-				return trees[treeIndex + 1].Keys.First() != fileType && trees[treeIndex - 1].Values.First().Keys.First() != dicName;
-			else
-				return true;
-		}
-
-		/// <summary>
 		/// Split the current tree into multiple trees based on packet size
 		/// </summary>
 		/// <param name="mainTypeTree">Tree of data sources</param>
 		/// <param name="maxFileBytes">Maximum file byte count</param>
 		/// <returns>List of Trees</returns>
-		/// <exception cref="InvalidOperationException">If the size of a single file exceeds the size of the package,throw this exception</exception>
-		static List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> CreatePacketsGroup(Dictionary<string, List<PackageEntry>> mainTypeTree, int maxFileBytes)
+
+		static List<Dictionary<string, WriteEntry>> CreatePacketsGroup(List<PackageEntry> entries, int maxFileBytes, bool isSingleFile)
 		{
-
-			List<Dictionary<string, Dictionary<string, List<PackageEntry>>>> packets = new List<Dictionary<string, Dictionary<string, List<PackageEntry>>>>();
-			//Create a new tree
-			Dictionary<string, Dictionary<string, List<PackageEntry>>> currentTree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
-			packets.Add(currentTree);
+			List<Dictionary<string, WriteEntry>> groups = new List<Dictionary<string, WriteEntry>>();
 			uint totalLength = 0;
-			foreach (var typeEntries in mainTypeTree)
+			ushort archiveIndex = 0;
+			Dictionary<string, WriteEntry> group = new Dictionary<string, WriteEntry>();
+			groups.Add(group);
+
+			if (isSingleFile)
 			{
-				//Create a new type tree and add the current one to the current tree
-				Dictionary<string, List<PackageEntry>> currentTypeTree = new Dictionary<string, List<PackageEntry>>();
-				currentTree[typeEntries.Key] = currentTypeTree;
-
-				//Group the entries under the current type tree according to their folder location
-				IEnumerable<IGrouping<string, PackageEntry>> dicGroups = typeEntries.Value.GroupBy(s => s.DirectoryName.Length == 0 ? Space : s.DirectoryName);
-				foreach (var dicGroup in dicGroups)
+				foreach (var entry in entries)
 				{
-					List<PackageEntry> entries = new List<PackageEntry>();
-					currentTypeTree[dicGroup.Key] = entries;
-
-					foreach (var entry in dicGroup)
-					{
-						var fileLength = entry.TotalLength;
-						//If the size of a single file exceeds the size of the package
-						if (fileLength >= maxFileBytes)
-							throw new InvalidOperationException("There are files exceeding max file bytes");
-
-						// TODO: Search for smaller files to fill in the empty space
-						if (totalLength + fileLength >= maxFileBytes)
-						{
-							if (entries.Count == 0)
-							{
-								currentTypeTree.Remove(dicGroup.Key);
-								if (currentTypeTree.Count == 0)
-									currentTree.Remove(typeEntries.Key);
-
-								if (currentTree.Count == 0)
-									packets.Remove(currentTree);
-							}
-
-							currentTree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
-							packets.Add(currentTree);
-							currentTypeTree = new Dictionary<string, List<PackageEntry>>();
-							currentTree[typeEntries.Key] = currentTypeTree;
-							entries = new List<PackageEntry>();
-							currentTypeTree[dicGroup.Key] = entries;
-							entries.Add(entry);
-							totalLength = fileLength;
-						}
-						else
-						{
-							totalLength += fileLength;
-							entries.Add(entry);
-						}
-
-					}
-
+					group.Add(entry.GetFullPath(), new(0x7FFF, totalLength, entry));
+					totalLength += entry.TotalLength;
 				}
 			}
-			return packets;
+			else
+			{
+				group.Add(entries[0].GetFullPath(), new(archiveIndex, totalLength, entries[0]));
+				totalLength += entries[0].TotalLength;
+
+				entries.RemoveAt(0);
+				do
+				{
+					PackageEntry entry = entries.Find(e => e.TotalLength < (ulong)maxFileBytes - totalLength);
+					if (entry is not null)
+					{
+						group.Add(entry.GetFullPath(), new(archiveIndex, totalLength, entry));
+						totalLength += entry.TotalLength;
+						entries.Remove(entry);
+					}
+					else
+					{
+						group = new Dictionary<string, WriteEntry>();
+						groups.Add(group);
+						totalLength = 0;
+						archiveIndex++;
+					}
+
+				} while (entries.Count != 0);
+			}
+
+
+			return groups;
 		}
 	}
 }
