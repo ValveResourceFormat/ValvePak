@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -11,7 +12,7 @@ namespace SteamDatabase.ValvePak
 	public partial class Package : IDisposable
 	{
 		sealed class SubStream : Stream, IDisposable
-        {
+		{
 #pragma warning disable CA2213 // Disposable fields should be disposed
 			private readonly Stream baseStream;
 #pragma warning restore CA2213
@@ -73,6 +74,11 @@ namespace SteamDatabase.ValvePak
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
+			Debug.Assert(Reader != null);
+			Debug.Assert(TreeChecksum != null);
+			Debug.Assert(ArchiveMD5EntriesChecksum != null);
+			Debug.Assert(WholeFileChecksum != null);
+
 			using var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
 			var hash = MD5.HashData(subStream);
 
@@ -102,9 +108,9 @@ namespace SteamDatabase.ValvePak
 		/// Verify MD5 hashes of individual chunk files provided in the VPK.
 		/// </summary>
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
-		public void VerifyChunkHashes(IProgress<string> progressReporter = null)
+		public void VerifyChunkHashes(IProgress<string>? progressReporter = null)
 		{
-			Stream stream = null;
+			Stream? stream = null;
 			var lastArchiveIndex = uint.MaxValue;
 
 			// When created by Valve, entries are sorted, and are 1MB chunks
@@ -137,6 +143,8 @@ namespace SteamDatabase.ValvePak
 					}
 					else
 					{
+						Debug.Assert(stream != null); // what's actually happening here? did we miss assigning stream to Reader.BaseStream?
+
 						var offset = entry.ArchiveIndex == 0x7FFF ? HeaderSize + TreeSize : 0;
 						stream.Seek(offset, SeekOrigin.Begin);
 					}
@@ -165,8 +173,13 @@ namespace SteamDatabase.ValvePak
 		/// Verify CRC32 checksums of all files in the package.
 		/// </summary>
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
-		public void VerifyFileChecksums(IProgress<string> progressReporter = null)
+		public void VerifyFileChecksums(IProgress<string>? progressReporter = null)
 		{
+			if (Entries == null)
+			{
+				return;
+			}
+
 			var allEntries = Entries
 				.SelectMany(file => file.Value)
 				.OrderBy(file => file.Offset)
@@ -193,6 +206,11 @@ namespace SteamDatabase.ValvePak
 			if (PublicKey == null || Signature == null)
 			{
 				return true;
+			}
+
+			if (Reader == null)
+			{
+				return false;
 			}
 
 			using var rsa = RSA.Create();

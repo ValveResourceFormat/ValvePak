@@ -6,6 +6,7 @@
     <IsTestProject>true</IsTestProject>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>../ValvePak/ValvePak.snk</AssemblyOriginatorKeyFile>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace SteamDatabase.ValvePak
 {
@@ -10,8 +11,11 @@ namespace SteamDatabase.ValvePak
 		/// <remarks>
 		/// Intentionally not comparing TypeName because this comparer is used on Entries which is split by extension already.
 		/// </remarks>
-		public int Compare(PackageEntry x, PackageEntry y)
+		public int Compare(PackageEntry? x, PackageEntry? y)
 		{
+			Debug.Assert(x != null);
+			Debug.Assert(y != null);
+
 			var comp = x.FileName.Length.CompareTo(y.FileName.Length);
 
 			if (comp != 0)

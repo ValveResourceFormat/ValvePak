@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
@@ -166,6 +167,8 @@ namespace SteamDatabase.ValvePak
 
 		private void ReadEntries()
 		{
+			Debug.Assert(Reader != null);
+
 			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
 			var typeEntries = new Dictionary<string, List<PackageEntry>>(stringComparer);
 			using var ms = new MemoryStream();
@@ -173,7 +176,7 @@ namespace SteamDatabase.ValvePak
 			// Types
 			while (true)
 			{
-				var typeName = ReadNullTermUtf8String(ms);
+				var typeName = ReadNullTermUtf8String(Reader, ms);
 
 				if (string.IsNullOrEmpty(typeName))
 				{
@@ -185,7 +188,7 @@ namespace SteamDatabase.ValvePak
 				// Directories
 				while (true)
 				{
-					var directoryName = ReadNullTermUtf8String(ms);
+					var directoryName = ReadNullTermUtf8String(Reader, ms);
 
 					if (string.IsNullOrEmpty(directoryName))
 					{
@@ -195,7 +198,7 @@ namespace SteamDatabase.ValvePak
 					// Files
 					while (true)
 					{
-						var fileName = ReadNullTermUtf8String(ms);
+						var fileName = ReadNullTermUtf8String(Reader, ms);
 
 						if (string.IsNullOrEmpty(fileName))
 						{
@@ -232,10 +235,6 @@ namespace SteamDatabase.ValvePak
 								totalRead += bytesRead;
 							}
 						}
-						else
-						{
-							entry.SmallData = [];
-						}
 
 						entries.Add(entry);
 					}
@@ -258,6 +257,8 @@ namespace SteamDatabase.ValvePak
 
 		private void ReadArchiveMD5Section()
 		{
+			Debug.Assert(Reader != null);
+
 			FileSizeBeforeArchiveMD5Entries = (uint)Reader.BaseStream.Position;
 
 			if (ArchiveMD5SectionSize == 0)
@@ -289,6 +290,8 @@ namespace SteamDatabase.ValvePak
 				return;
 			}
 
+			Debug.Assert(Reader != null);
+
 			TreeChecksum = Reader.ReadBytes(16);
 			ArchiveMD5EntriesChecksum = Reader.ReadBytes(16);
 			FileSizeBeforeWholeFileHash = (uint)Reader.BaseStream.Position;
@@ -297,6 +300,8 @@ namespace SteamDatabase.ValvePak
 
 		private void ReadSignatureSection()
 		{
+			Debug.Assert(Reader != null);
+
 			FileSizeBeforeSignature = (uint)Reader.BaseStream.Position;
 
 			if (SignatureSectionSize == 0)
@@ -330,6 +335,8 @@ namespace SteamDatabase.ValvePak
 			}
 			else
 			{
+				Debug.Assert(Reader != null);
+
 				stream = Reader.BaseStream;
 				stream.Seek(HeaderSize + TreeSize, SeekOrigin.Begin);
 			}
@@ -364,6 +371,8 @@ namespace SteamDatabase.ValvePak
 				// If the package was opened by providing a file path, we can memory map non directory files
 				if (entry.ArchiveIndex == 0x7FFF)
 				{
+					Debug.Assert(Reader != null);
+
 					if (Reader.BaseStream is FileStream fileStream)
 					{
 						path = fileStream.Name;
@@ -402,11 +411,11 @@ namespace SteamDatabase.ValvePak
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private string ReadNullTermUtf8String(MemoryStream ms)
+		private static string ReadNullTermUtf8String(BinaryReader reader, MemoryStream ms)
 		{
 			while (true)
 			{
-				var b = Reader.ReadByte();
+				var b = reader.ReadByte();
 
 				if (b == 0x00)
 				{

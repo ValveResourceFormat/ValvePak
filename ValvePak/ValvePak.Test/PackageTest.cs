@@ -103,7 +103,7 @@ namespace Tests
 				Assert.That(package.FindEntry(" "), Is.Null);
 			});
 
-			foreach (var extension in package.Entries.Values)
+			foreach (var extension in package.Entries!.Values)
 			{
 				foreach (var entry in extension)
 				{
@@ -133,7 +133,7 @@ namespace Tests
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/CHESS.vdf"), Is.Null);
 			});
 
-			foreach (var extension in package.Entries.Values)
+			foreach (var extension in package.Entries!.Values)
 			{
 				foreach (var entry in extension)
 				{
@@ -163,21 +163,21 @@ namespace Tests
 		public void ThrowsNullArgumentInSetFilename()
 		{
 			using var package = new Package();
-			Assert.Throws<ArgumentNullException>(() => package.SetFileName(null));
+			Assert.Throws<ArgumentNullException>(() => package.SetFileName(null!));
 		}
 
 		[Test]
 		public void ThrowsNullArgumentInReadStream()
 		{
 			using var package = new Package();
-			Assert.Throws<ArgumentNullException>(() => package.Read((Stream)null));
+			Assert.Throws<ArgumentNullException>(() => package.Read((Stream)null!));
 		}
 
 		[Test]
 		public void ThrowsNullArgumentInnReadString()
 		{
 			using var package = new Package();
-			Assert.Throws<ArgumentNullException>(() => package.Read((string)null));
+			Assert.Throws<ArgumentNullException>(() => package.Read((string)null!));
 		}
 
 		[Test]
@@ -188,14 +188,14 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Throws<ArgumentNullException>(() => package.FindEntry(null));
+			Assert.Throws<ArgumentNullException>(() => package.FindEntry(null!));
 		}
 
 		[Test]
 		public void ThrowsNullArgumentInReadEntry()
 		{
 			using var package = new Package();
-			Assert.Throws<ArgumentNullException>(() => package.ReadEntry(null, out var output));
+			Assert.Throws<ArgumentNullException>(() => package.ReadEntry(null!, out var output));
 		}
 
 		[Test]
@@ -230,6 +230,7 @@ namespace Tests
 			package.Read(path);
 
 			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			Assert.That(file, Is.Not.Null);
 			Assert.That(file.CRC32, Is.EqualTo(0x32CFF012));
 
 			file.CRC32 = 0xDEADBEEF;
@@ -364,6 +365,7 @@ namespace Tests
 			package.Read(path);
 
 			var entry = package.FindEntry("kitten.jpg");
+			Assert.That(entry, Is.Not.Null);
 			var biggerBuffer = new byte[entry.TotalLength + 256];
 			package.ReadEntry(entry, biggerBuffer, validateCrc: true);
 
@@ -384,6 +386,7 @@ namespace Tests
 			Assert.DoesNotThrow(() => package.VerifyFileChecksums());
 
 			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			Assert.That(file, Is.Not.Null);
 			Assert.That(file.CRC32, Is.EqualTo(0x32CFF012));
 
 			file.CRC32 = 0xDEADBEEF;

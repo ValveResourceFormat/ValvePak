@@ -21,11 +21,11 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg"));
+			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
 			Assert.That(stream, Is.InstanceOf<MemoryMappedViewStream>());
 			VerifyKitten(stream);
 
-			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto"));
+			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
 			Assert.That(stream2, Is.InstanceOf<MemoryStream>()); // This file is less than 4kb
 			VerifyProto(stream2);
 		}
@@ -38,11 +38,11 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg"));
+			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
 			Assert.That(stream, Is.InstanceOf<MemoryMappedViewStream>());
 			VerifyKitten(stream);
 
-			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto"));
+			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
 			Assert.That(stream2, Is.InstanceOf<MemoryStream>());
 			VerifyProto(stream2);
 		}
@@ -57,11 +57,11 @@ namespace Tests
 			package.SetFileName("surely non existing file");
 			package.Read(fileStream);
 
-			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg"));
+			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
 			Assert.That(stream, Is.InstanceOf<MemoryMappedViewStream>());
 			VerifyKitten(stream);
 
-			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto"));
+			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
 			Assert.That(stream2, Is.InstanceOf<MemoryStream>());
 			VerifyProto(stream2);
 		}
@@ -76,11 +76,11 @@ namespace Tests
 			package.SetFileName("surely non existing file");
 			package.Read(memoryStream);
 
-			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg"));
+			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
 			Assert.That(stream, Is.InstanceOf<MemoryStream>());
 			VerifyKitten(stream);
 
-			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto"));
+			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
 			Assert.That(stream2, Is.InstanceOf<MemoryStream>());
 			VerifyProto(stream2);
 		}

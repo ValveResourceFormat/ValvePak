@@ -13,6 +13,7 @@
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>ValvePak.snk</AssemblyOriginatorKeyFile>
     <IsAotCompatible>True</IsAotCompatible>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>

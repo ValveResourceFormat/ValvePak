@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
 using System.Security.Cryptography;
@@ -18,6 +19,11 @@ namespace SteamDatabase.ValvePak
 		public bool RemoveFile(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+
+			if (Entries == null)
+			{
+				return false;
+			}
 
 			if (!Entries.TryGetValue(entry.TypeName, out var typeEntries))
 			{
@@ -136,7 +142,7 @@ namespace SteamDatabase.ValvePak
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
 			// Precalculate the file tree and set data offsets
-			foreach (var typeEntries in Entries)
+			foreach (var typeEntries in Entries ?? [])
 			{
 				var typeTree = new Dictionary<string, List<PackageEntry>>();
 				tree[typeEntries.Key] = typeTree;
@@ -276,9 +282,12 @@ namespace SteamDatabase.ValvePak
 				}
 
 				// File tree hash
-				writer.Write(fileTreeMD5.Hash);
+				var treeHash = fileTreeMD5.Hash;
+				Debug.Assert(treeHash != null);
 
-				fullFileMD5.TransformBlock(fileTreeMD5.Hash, 0, fileTreeMD5.Hash.Length, null, 0);
+				writer.Write(treeHash);
+
+				fullFileMD5.TransformBlock(treeHash, 0, treeHash.Length, null, 0);
 
 				// File hashes hash
 				var fileHashesMD5 = MD5.HashData([]); // We did not write any file hashes
@@ -286,7 +295,9 @@ namespace SteamDatabase.ValvePak
 
 				// Full file hash
 				fullFileMD5.TransformFinalBlock(fileHashesMD5, 0, fileHashesMD5.Length);
-				writer.Write(fullFileMD5.Hash);
+				var fullHash = fullFileMD5.Hash;
+				Debug.Assert(fullHash != null);
+				writer.Write(fullHash);
 			}
 			finally
 			{
