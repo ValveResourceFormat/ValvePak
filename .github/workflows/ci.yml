@@ -58,17 +58,14 @@ jobs:
       id-token: write
 
     steps:
-    - name: Create artifacts directory
-      run: mkdir -p artifacts
-
     - name: Download artifacts
       uses: actions/download-artifact@v5
-      id: download
       with:
+        name: nupkg
         path: artifacts
 
     - name: Rename nupkg
-      run: mv ${{ steps.download.outputs.download-path }}/nupkg/ValvePak.*.nupkg artifacts/ValvePak.nupkg
+      run: mv artifacts/ValvePak.*.nupkg artifacts/ValvePak.nupkg
 
     - name: Display artifacts folder structure
       run: ls -Rl
