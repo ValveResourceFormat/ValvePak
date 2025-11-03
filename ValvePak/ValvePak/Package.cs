@@ -171,13 +171,31 @@ namespace SteamDatabase.ValvePak
 		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
-		public PackageEntry? FindEntry(string filePathStr)
+		/// <remarks>
+		/// Normalizes the directory path separator from <see cref="WindowsDirectorySeparator"/> (\) to <see cref="DirectorySeparator"/> (/) in <paramref name="filePath"/>.
+		/// </remarks>
+		public PackageEntry? FindEntry(string filePath)
 		{
-			ArgumentNullException.ThrowIfNull(filePathStr);
+			ArgumentNullException.ThrowIfNull(filePath);
 
 			// Normalize path separators when reading the file list
-			var filePath = filePathStr.Replace(WindowsDirectorySeparator, DirectorySeparatorChar).AsSpan();
+			var filePathSpan = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar).AsSpan();
 
+			return FindEntry(filePathSpan);
+		}
+
+		/// <summary>
+		/// Searches for a given file entry in the file list.
+		///
+		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method will use <see cref="List{T}.BinarySearch(T, IComparer{T})"/>.
+		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
+		/// </summary>
+		/// <param name="filePath">Full path to the file to find.</param>
+		/// <remarks>
+		/// Unlike the <see cref="FindEntry(string)"/> version, this one does not normalize the directory path separator.
+		/// </remarks>
+		public PackageEntry? FindEntry(ReadOnlySpan<char> filePath)
+		{
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
 			var fileName = filePath[(lastSeparator + 1)..];
@@ -276,7 +294,7 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// This sorts <see cref="Entries"/> so that it can be searched through using binary search.
-		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntry"/> to search case insensitively.
+		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntry(string)"/> to search case insensitively.
 		/// </summary>
 		/// <remarks>
 		/// This is experimental and may be removed in a future release.
