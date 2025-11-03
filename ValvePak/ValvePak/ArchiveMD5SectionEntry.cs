@@ -1,12 +1,12 @@
 namespace SteamDatabase.ValvePak
 {
 	/// <summary>
-	/// VPK_ArchiveMD5SectionEntry
+	/// Represents an entry in the VPK archive MD5 section, containing checksum information for a chunk of archive data.
 	/// </summary>
 	public class ArchiveMD5SectionEntry
 	{
 		/// <summary>
-		/// Gets or sets the CRC32 checksum of this entry.
+		/// Gets or sets the archive index.
 		/// </summary>
 		public required uint ArchiveIndex { get; set; }
 
@@ -21,7 +21,7 @@ namespace SteamDatabase.ValvePak
 		public required uint Length { get; set; }
 
 		/// <summary>
-		/// Gets or sets the expected Checksum checksum.
+		/// Gets or sets the expected checksum.
 		/// </summary>
 		public required byte[] Checksum { get; set; }
 	}

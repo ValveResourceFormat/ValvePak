@@ -10,6 +10,9 @@ namespace SteamDatabase.ValvePak
 	/// </summary>
 	public partial class Package : IDisposable
 	{
+		/// <summary>
+		/// The VPK file signature magic number.
+		/// </summary>
 		public const int MAGIC = 0x55AA1234;
 
 		internal const string Space = " ";
@@ -116,6 +119,9 @@ namespace SteamDatabase.ValvePak
 			GC.SuppressFinalize(this);
 		}
 
+		/// <summary>
+		/// Releases binary reader.
+		/// </summary>
 		protected virtual void Dispose(bool disposing)
 		{
 			if (disposing)
@@ -220,11 +226,11 @@ namespace SteamDatabase.ValvePak
 				return default;
 			}
 
-			/// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
-			/// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
-			///
-			/// Manually implement binary search to avoid allocating new strings for file and directory names.
-			/// See <see cref="MemoryExtensions.BinarySearch{T}(ReadOnlySpan{T}, IComparable{T})"/> for reference.
+			// Searches for a given file entry in the file list after it has been optimized with <see cref="OptimizeEntriesForBinarySearch"/>.
+			// This also supports case insensitive search by using a different <see cref="StringComparison"/>.
+			//
+			// Manually implement binary search to avoid allocating new strings for file and directory names.
+			// See <see cref="MemoryExtensions.BinarySearch{T}(ReadOnlySpan{T}, IComparable{T})"/> for reference.
 
 			int lo = 0;
 
@@ -233,7 +239,7 @@ namespace SteamDatabase.ValvePak
 				var i = (int)(((uint)hi + (uint)lo) >> 1);
 				var entry = entriesForExtension[i];
 
-				/// This code must match <see cref="CaseInsensitivePackageEntryComparer.Compare(PackageEntry, PackageEntry)"/>
+				// This code must match <see cref="CaseInsensitivePackageEntryComparer.Compare(PackageEntry, PackageEntry)"/>
 				var comp = fileName.Length.CompareTo(entry.FileName.Length);
 
 				if (comp == 0)

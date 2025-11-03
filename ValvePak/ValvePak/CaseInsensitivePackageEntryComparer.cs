@@ -9,7 +9,7 @@ namespace SteamDatabase.ValvePak
 		public StringComparison Comparison { get; } = comparison;
 
 		/// <remarks>
-		/// Intentionally not comparing TypeName because this comparer is used on Entries which is split by extension already.
+		/// Intentionally not comparing <see cref="PackageEntry.TypeName"/> because this comparer is used on <see cref="Package.Entries"/> which is split by extension already.
 		/// </remarks>
 		public int Compare(PackageEntry? x, PackageEntry? y)
 		{

@@ -1,5 +1,8 @@
 namespace SteamDatabase.ValvePak
 {
+	/// <summary>
+	/// Represents a file entry in a VPK package.
+	/// </summary>
 	public class PackageEntry
 	{
 		/// <summary>
@@ -12,7 +15,7 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// Gets or sets the name of the directory this file is in.
-		/// '/' is always used as a dictionary separator in Valve's implementation.
+		/// '/' is always used as a directory separator in Valve's implementation.
 		/// Directory names are also always lower cased in Valve's implementation.
 		/// </summary>
 		public required string DirectoryName { get; set; }
@@ -44,7 +47,7 @@ namespace SteamDatabase.ValvePak
 		public ushort ArchiveIndex { get; set; }
 
 		/// <summary>
-		/// Gets the length in bytes by adding Length and length of SmallData.
+		/// Gets the length in bytes by adding <see cref="Length"/> and length of <see cref="SmallData"/>.
 		/// </summary>
 		public uint TotalLength
 		{
@@ -96,6 +99,10 @@ namespace SteamDatabase.ValvePak
 			return string.Concat(DirectoryName, Package.DirectorySeparator, GetFileName());
 		}
 
+		/// <summary>
+		/// Returns a string representation of this package entry.
+		/// </summary>
+		/// <returns>A string that represents the current package entry.</returns>
 		public override string ToString()
 		{
 			return $"{GetFullPath()} crc=0x{CRC32:x2} metadatasz={SmallData.Length} fnumber={ArchiveIndex} ofs=0x{Offset:x2} sz={Length}";
