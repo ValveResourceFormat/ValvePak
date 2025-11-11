@@ -15,12 +15,11 @@
     <IsAotCompatible>True</IsAotCompatible>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+	<NoWarn>$(NoWarn);CS8002</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Blake3" Version="2.0.0">
-        <NoWarn>CS8002</NoWarn>
-	</PackageReference>
+    <PackageReference Include="Blake3" Version="2.0.0" />
     <PackageReference Include="System.IO.Hashing" Version="9.0.11" />
   </ItemGroup>
 
