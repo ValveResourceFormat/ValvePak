@@ -1,0 +1,281 @@
+//------------------------------------------------
+//--- 010 Editor v14.0 Binary Template
+//
+//      File: VPK.bt
+//   Authors: Generated from ValvePak
+//   Version: 1.0
+//   Purpose: Parse Valve Package (VPK) files
+//  Category: Game Files
+// File Mask: *.vpk
+//  ID Bytes: 34 12 AA 55 // 0x55AA1234
+//   History:
+//------------------------------------------------
+
+LittleEndian();
+
+// Constants
+#define VPK_MAGIC 0x55AA1234
+#define VPK_ENTRY_TERMINATOR 0xFFFF
+
+// Color definitions
+#define COLOR_HEADER   0xE0E0FF
+#define COLOR_TREE     0xFFE0E0
+#define COLOR_ENTRY    0xE0FFE0
+#define COLOR_DATA     0xFFFFE0
+#define COLOR_MD5      0xE0FFFF
+#define COLOR_SIG      0xFFE0FF
+
+// Forward declarations
+local uint64 treeStartPos;
+local uint64 fileDataStartPos;
+local uint64 archiveMD5StartPos;
+local uint64 otherMD5StartPos;
+local uint64 signatureStartPos;
+
+// EHashType enum
+typedef enum <ushort> {
+    MD5 = 0,
+    Blake3 = 1
+} EHashType;
+
+// VPK Header
+typedef struct {
+    uint Magic <format=hex, comment="Should be 0x55AA1234">;
+
+    if (Magic != VPK_MAGIC) {
+        Warning("Invalid VPK magic number!");
+        return -1;
+    }
+
+    uint Version <comment="VPK version (1 or 2)">;
+    uint TreeSize <comment="Size of the directory tree">;
+
+    if (Version == 2) {
+        uint FileDataSectionSize <comment="Size of embedded file data">;
+        uint ArchiveMD5SectionSize <comment="Size of archive MD5 section">;
+        uint OtherMD5SectionSize <comment="Size of other MD5 section">;
+        uint SignatureSectionSize <comment="Size of signature section">;
+    } else if (Version != 1) {
+        Warning("Unknown VPK version: %u", Version);
+    }
+} VPKHeader <bgcolor=COLOR_HEADER>;
+
+// Package Entry
+typedef struct {
+    uint CRC32 <format=hex, comment="CRC32 checksum">;
+    ushort SmallDataSize <comment="Preload bytes">;
+    ushort ArchiveIndex <comment="Archive index (0x7FFF = in this file)">;
+    uint Offset <format=hex, comment="Offset in archive">;
+    uint Length <comment="Length in bytes">;
+    ushort Terminator <format=hex, comment="Should be 0xFFFF">;
+
+    if (Terminator != VPK_ENTRY_TERMINATOR) {
+        Warning("Invalid entry terminator: 0x%04X (expected 0xFFFF)", Terminator);
+    }
+
+    if (SmallDataSize > 0) {
+        ubyte SmallData[SmallDataSize] <comment="Preloaded data", bgcolor=COLOR_DATA>;
+    }
+} PackageEntry <bgcolor=COLOR_ENTRY, read=ReadPackageEntry>;
+
+string ReadPackageEntry(PackageEntry &entry) {
+    local string s;
+    SPrintf(s, "CRC: 0x%08X, Archive: %u, Offset: 0x%X, Length: %u, PreloadSize: %u",
+            entry.CRC32, entry.ArchiveIndex, entry.Offset, entry.Length, entry.SmallDataSize);
+    return s;
+}
+
+// File Entry
+typedef struct {
+    string FileName <comment="File name without extension">;
+
+    if (FileName == "") {
+        // End of files marker
+        return;
+    }
+
+    PackageEntry Entry;
+} FileEntry <read=ReadFileEntry>;
+
+string ReadFileEntry(FileEntry &fe) {
+    if (fe.FileName == "")
+        return "(end)";
+    return fe.FileName;
+}
+
+// Directory Entry
+typedef struct {
+    string DirectoryName <comment="Directory path">;
+
+    if (DirectoryName == "") {
+        // End of directories marker
+        return;
+    }
+
+    local int fileCount = 0;
+    while (!FEof()) {
+        FileEntry File;
+
+        if (File.FileName == "") {
+            break;
+        }
+        fileCount++;
+    }
+} DirectoryEntry <read=ReadDirectoryEntry>;
+
+string ReadDirectoryEntry(DirectoryEntry &de) {
+    local string s;
+    if (de.DirectoryName == "") {
+        return "(end)";
+    }
+    SPrintf(s, "%s (%d files)", de.DirectoryName, de.fileCount);
+    return s;
+}
+
+// Type Entry
+typedef struct {
+    string TypeName <comment="File extension">;
+
+    if (TypeName == "") {
+        // End of types marker
+        return;
+    }
+
+    local int dirCount = 0;
+    while (!FEof()) {
+        DirectoryEntry Directory;
+
+        if (Directory.DirectoryName == "") {
+            break;
+        }
+        dirCount++;
+    }
+} TypeEntry <read=ReadTypeEntry>;
+
+string ReadTypeEntry(TypeEntry &te) {
+    local string s;
+    if (te.TypeName == "") {
+        return "(end)";
+    }
+    SPrintf(s, ".%s (%d directories)", te.TypeName, te.dirCount);
+    return s;
+}
+
+// Directory Tree
+typedef struct {
+    local int typeCount = 0;
+    while (!FEof() && (FTell() - treeStartPos) < header.TreeSize) {
+        TypeEntry Type;
+
+        if (Type.TypeName == "") {
+            break;
+        }
+        typeCount++;
+    }
+} DirectoryTree <bgcolor=COLOR_TREE>;
+
+// Archive MD5 Section Entry
+typedef struct {
+    ushort ArchiveIndex <comment="Archive index">;
+    EHashType HashType <comment="Hash algorithm">;
+    uint Offset <format=hex, comment="Offset in archive">;
+    uint Length <comment="Length in bytes">;
+    ubyte Checksum[16] <format=hex, comment="MD5/Blake3 hash">;
+} ArchiveMD5SectionEntry <bgcolor=COLOR_MD5, read=ReadArchiveMD5Entry>;
+
+string ReadArchiveMD5Entry(ArchiveMD5SectionEntry &entry) {
+    local string s;
+    local string hash;
+    SPrintf(hash, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+            entry.Checksum[0], entry.Checksum[1], entry.Checksum[2], entry.Checksum[3],
+            entry.Checksum[4], entry.Checksum[5], entry.Checksum[6], entry.Checksum[7],
+            entry.Checksum[8], entry.Checksum[9], entry.Checksum[10], entry.Checksum[11],
+            entry.Checksum[12], entry.Checksum[13], entry.Checksum[14], entry.Checksum[15]);
+    SPrintf(s, "[%u] %u = %s", entry.ArchiveIndex, entry.HashType, hash);
+    return s;
+}
+
+// Archive MD5 Section
+typedef struct {
+    local int entryCount = header.ArchiveMD5SectionSize / 28; // 28 = sizeof(ArchiveMD5SectionEntry)
+    local int i;
+    for (i = 0; i < entryCount; i++) {
+        ArchiveMD5SectionEntry Entry;
+    }
+} ArchiveMD5Section <bgcolor=COLOR_MD5>;
+
+// Other MD5 Section
+typedef struct {
+    ubyte TreeChecksum[16] <format=hex, comment="MD5 of directory tree">;
+    ubyte ArchiveMD5EntriesChecksum[16] <format=hex, comment="MD5 of archive MD5 entries">;
+    ubyte WholeFileChecksum[16] <format=hex, comment="MD5 of entire file">;
+} OtherMD5Section <bgcolor=COLOR_MD5>;
+
+// Signature Section
+typedef struct {
+    int PublicKeySize <comment="Size of public key">;
+
+    // CS2 has a special case where SignatureSectionSize is 20 and PublicKeySize equals MAGIC
+    if (header.SignatureSectionSize == 20 && PublicKeySize == VPK_MAGIC) {
+        // CS2 special case - just skip the rest
+        ubyte Padding[16];
+        return;
+    }
+
+    if (PublicKeySize > 0) {
+        ubyte PublicKey[PublicKeySize] <comment="Public key data">;
+    }
+
+    int SignatureSize <comment="Size of signature">;
+
+    if (SignatureSize > 0) {
+        ubyte Signature[SignatureSize] <comment="Signature data">;
+    }
+} SignatureSection <bgcolor=COLOR_SIG>;
+
+//---------------------------------------------
+// Main Parsing
+//---------------------------------------------
+
+// Parse header
+VPKHeader header;
+
+// Calculate positions
+treeStartPos = FTell();
+fileDataStartPos = treeStartPos + header.TreeSize;
+
+if (header.Version == 2) {
+    archiveMD5StartPos = fileDataStartPos + header.FileDataSectionSize;
+    otherMD5StartPos = archiveMD5StartPos + header.ArchiveMD5SectionSize;
+    signatureStartPos = otherMD5StartPos + header.OtherMD5SectionSize;
+}
+
+// Parse directory tree
+DirectoryTree tree;
+
+// Version 2 sections
+if (header.Version == 2) {
+    // File data section (if any)
+    if (header.FileDataSectionSize > 0) {
+        FSeek(fileDataStartPos);
+        ubyte FileDataSection[header.FileDataSectionSize] <bgcolor=COLOR_DATA, comment="Embedded file data">;
+    }
+
+    // Archive MD5 section
+    if (header.ArchiveMD5SectionSize > 0) {
+        FSeek(archiveMD5StartPos);
+        ArchiveMD5Section archiveMD5Section;
+    }
+
+    // Other MD5 section
+    if (header.OtherMD5SectionSize == 48) {
+        FSeek(otherMD5StartPos);
+        OtherMD5Section otherMD5Section;
+    }
+
+    // Signature section
+    if (header.SignatureSectionSize > 0) {
+        FSeek(signatureStartPos);
+        SignatureSection signatureSection;
+    }
+}
