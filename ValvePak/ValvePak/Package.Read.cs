@@ -109,10 +109,10 @@ namespace SteamDatabase.ValvePak
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
 		public void ReadEntry(PackageEntry entry, byte[] output, bool validateCrc = true)
 		{
-            ArgumentNullException.ThrowIfNull(entry);
-            ArgumentNullException.ThrowIfNull(output);
+			ArgumentNullException.ThrowIfNull(entry);
+			ArgumentNullException.ThrowIfNull(output);
 
-            var totalLength = (int)entry.TotalLength;
+			var totalLength = (int)entry.TotalLength;
 
 			if (output.Length < totalLength)
 			{
@@ -145,7 +145,7 @@ namespace SteamDatabase.ValvePak
 				}
 				finally
 				{
-                    if (entry.ArchiveIndex != 0x7FFF)
+					if (entry.ArchiveIndex != 0x7FFF)
 					{
 						fs.Dispose();
 					}
@@ -263,23 +263,32 @@ namespace SteamDatabase.ValvePak
 
 			if (ArchiveMD5SectionSize == 0)
 			{
-				ArchiveMD5Entries = [];
+				AccessPackFileHashes = [];
 				return;
 			}
 
 			var entries = (int)(ArchiveMD5SectionSize / 28); // 28 is sizeof(VPK_MD5SectionEntry), which is int + int + int + 16 chars
 
-			ArchiveMD5Entries = new List<ArchiveMD5SectionEntry>(entries);
+			AccessPackFileHashes = new List<ChunkHashFraction>(entries);
 
 			for (var i = 0; i < entries; i++)
 			{
-				ArchiveMD5Entries.Add(new ArchiveMD5SectionEntry
+				var hashFraction = new ChunkHashFraction
 				{
-					ArchiveIndex = Reader.ReadUInt32(),
+					ArchiveIndex = Reader.ReadUInt16(),
+					HashType = (EHashType)Reader.ReadUInt16(),
 					Offset = Reader.ReadUInt32(),
 					Length = Reader.ReadUInt32(),
 					Checksum = Reader.ReadBytes(16)
-				});
+				};
+
+				if (hashFraction.ArchiveIndex == 0 && hashFraction.HashType == (EHashType)0x8000)
+				{
+					hashFraction.ArchiveIndex = 0x7FFF;
+					hashFraction.HashType = EHashType.MD5;
+				}
+
+				AccessPackFileHashes.Add(hashFraction);
 			}
 		}
 
@@ -355,10 +364,10 @@ namespace SteamDatabase.ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
-        {
-            ArgumentNullException.ThrowIfNull(entry);
+		{
+			ArgumentNullException.ThrowIfNull(entry);
 
-            if (entry.Length <= 4096 || entry.SmallData.Length > 0)
+			if (entry.Length <= 4096 || entry.SmallData.Length > 0)
 			{
 				ReadEntry(entry, out var output, false);
 				return new MemoryStream(output);

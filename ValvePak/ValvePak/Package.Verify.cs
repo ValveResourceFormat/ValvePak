@@ -55,7 +55,7 @@ namespace SteamDatabase.ValvePak
 		private uint FileSizeBeforeWholeFileHash;
 
 		/// <summary>
-		/// Gets the size in bytes of the whole file before <see cref="ArchiveMD5Entries"/>.
+		/// Gets the size in bytes of the whole file before <see cref="AccessPackFileHashes"/>.
 		/// </summary>
 		private uint FileSizeBeforeArchiveMD5Entries;
 
@@ -105,60 +105,84 @@ namespace SteamDatabase.ValvePak
 		}
 
 		/// <summary>
-		/// Verify MD5 hashes of individual chunk files provided in the VPK.
+		/// Verify hashes of individual chunk files provided in the VPK.
 		/// </summary>
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyChunkHashes(IProgress<string>? progressReporter = null)
 		{
 			Stream? stream = null;
-			var lastArchiveIndex = uint.MaxValue;
+			var lastArchiveIndex = ushort.MaxValue;
 
 			// When created by Valve, entries are sorted, and are 1MB chunks
-			var allEntries = ArchiveMD5Entries
+			var allEntries = AccessPackFileHashes
 				.OrderBy(file => file.Offset)
 				.GroupBy(file => file.ArchiveIndex)
 				.OrderBy(x => x.Key)
 				.SelectMany(x => x);
 
+			Span<byte> hash = stackalloc byte[16];
+
 			try
 			{
 				foreach (var entry in allEntries)
 				{
-					if (entry.ArchiveIndex > short.MaxValue)
+					var hashTypeName = entry.HashType switch
 					{
-						throw new InvalidDataException("Unexpected archive index");
-					}
+						EHashType.Blake3 => "Blake3",
+						EHashType.MD5 => "MD5",
+						_ => string.Empty,
+					};
 
-					progressReporter?.Report($"Verifying MD5 hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
+					progressReporter?.Report($"Verifying {hashTypeName} hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
 
-					if (lastArchiveIndex != entry.ArchiveIndex)
+					if (stream == null || lastArchiveIndex != entry.ArchiveIndex)
 					{
 						if (lastArchiveIndex != 0x7FFF)
 						{
 							stream?.Close();
 						}
 
-						stream = GetFileStream((ushort)entry.ArchiveIndex);
+						stream = GetFileStream(entry.ArchiveIndex);
 						lastArchiveIndex = entry.ArchiveIndex;
 					}
 					else
 					{
-						Debug.Assert(stream != null); // what's actually happening here? did we miss assigning stream to Reader.BaseStream?
-
 						var offset = entry.ArchiveIndex == 0x7FFF ? HeaderSize + TreeSize : 0;
 						stream.Seek(offset, SeekOrigin.Begin);
 					}
 
 					using var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
-					var hash = MD5.HashData(subStream);
+
+					switch (entry.HashType)
+					{
+						case EHashType.Blake3:
+							using (var hasher = Blake3.Hasher.New())
+							{
+								var buffer = new byte[8192]; // TODO: Fix this alloc
+								int bytesRead;
+								while ((bytesRead = subStream.Read(buffer, 0, buffer.Length)) > 0)
+								{
+									hasher.UpdateWithJoin(buffer.AsSpan(0, bytesRead));
+								}
+								hasher.Finalize(hash);
+							}
+							break;
+
+						case EHashType.MD5:
+							MD5.HashData(subStream, hash);
+							break;
+
+						default:
+							throw new InvalidDataException($"Unrecognized hash type: {entry.HashType} ({(ushort)entry.HashType})");
+					}
 
 					if (!hash.SequenceEqual(entry.Checksum))
 					{
-						throw new InvalidDataException($"Package checksum mismatch in archive {entry.ArchiveIndex} at {entry.Offset} ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(entry.Checksum)})");
+						throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
 					}
 				}
 
-				progressReporter?.Report("Successfully verified archive MD5 hashes.");
+				progressReporter?.Report("Successfully verified archive hashes.");
 			}
 			finally
 			{

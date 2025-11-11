@@ -106,7 +106,7 @@ namespace SteamDatabase.ValvePak
 		/// <summary>
 		/// Gets the archive MD5 checksum section entries. Also known as cache line hashes.
 		/// </summary>
-		public List<ArchiveMD5SectionEntry> ArchiveMD5Entries { get; private set; } = [];
+		public List<ChunkHashFraction> AccessPackFileHashes { get; private set; } = [];
 
 		private CaseInsensitivePackageEntryComparer? Comparer;
 

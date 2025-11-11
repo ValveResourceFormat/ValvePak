@@ -488,6 +488,30 @@ namespace Tests
 			Assert.Throws<FileNotFoundException>(() => package.VerifyChunkHashes());
 		}
 
+		[Test]
+		public void TestVerifyChunkHashes()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "fall_2025_rewardfx.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			Assert.DoesNotThrow(package.VerifyHashes);
+			Assert.DoesNotThrow(() => package.VerifyChunkHashes(null));
+		}
+
+		[Test]
+		public void TestVerifyChunkHashesBlake3()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "monster_hunter_dashboard_balek3_chunk_hash.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			Assert.DoesNotThrow(package.VerifyHashes);
+			Assert.DoesNotThrow(() => package.VerifyChunkHashes(null));
+		}
+
 		private static void TestVPKExtraction(string path)
 		{
 			using var package = new Package();

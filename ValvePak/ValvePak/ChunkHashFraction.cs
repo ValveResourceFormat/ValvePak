@@ -1,14 +1,19 @@
 namespace SteamDatabase.ValvePak
 {
 	/// <summary>
-	/// Represents an entry in the VPK archive MD5 section, containing checksum information for a chunk of archive data.
+	/// Represents an entry in the VPK archive hashes section, containing checksum information for a chunk of archive data.
 	/// </summary>
-	public class ArchiveMD5SectionEntry
+	public class ChunkHashFraction
 	{
 		/// <summary>
 		/// Gets or sets the archive index.
 		/// </summary>
-		public required uint ArchiveIndex { get; set; }
+		public required ushort ArchiveIndex { get; set; }
+
+		/// <summary>
+		/// Gets or sets the hash algorithm type used for this entry.
+		/// </summary>
+		public required EHashType HashType { get; set; }
 
 		/// <summary>
 		/// Gets or sets the offset in the package.
