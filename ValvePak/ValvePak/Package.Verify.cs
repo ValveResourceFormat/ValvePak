@@ -255,8 +255,8 @@ namespace SteamDatabase.ValvePak
 					return false;
 				}
 
-				var sha256OfMd5 = SHA256.HashData(hash); // SHA256(MD5) is certainly a choice
-				return rsa.VerifyHash(sha256OfMd5, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+				// SHA256(MD5) is certainly a choice
+				return rsa.VerifyData(hash, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 			}
 
 			if (SignatureType != ESignatureType.FullFile)
