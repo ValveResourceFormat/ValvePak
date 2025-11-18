@@ -322,10 +322,25 @@ namespace SteamDatabase.ValvePak
 
 			if (SignatureSectionSize == 20 && publicKeySize == MAGIC)
 			{
-				// CS2 has this
+				SignatureType = (ESignatureType)Reader.ReadInt32();
+				publicKeySize = Reader.ReadInt32();
+				var signatureSize2 = Reader.ReadInt32();
+				Reader.ReadInt32(); // reserved?
+
+				if (publicKeySize > 0)
+				{
+					PublicKey = Reader.ReadBytes(publicKeySize);
+				}
+
+				if (signatureSize2 > 0)
+				{
+					Signature = Reader.ReadBytes(signatureSize2);
+				}
+
 				return;
 			}
 
+			SignatureType = ESignatureType.FullFile;
 			PublicKey = Reader.ReadBytes(publicKeySize);
 
 			var signatureSize = Reader.ReadInt32();

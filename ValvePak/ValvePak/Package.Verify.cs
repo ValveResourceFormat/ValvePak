@@ -240,6 +240,30 @@ namespace SteamDatabase.ValvePak
 			using var rsa = RSA.Create();
 			rsa.ImportSubjectPublicKeyInfo(PublicKey, out _);
 
+			if (SignatureType == ESignatureType.OnlyFileChecksum)
+			{
+				if (WholeFileChecksum == null)
+				{
+					return false;
+				}
+
+				using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+				var hash = MD5.HashData(subStream3);
+
+				if (!hash.SequenceEqual(WholeFileChecksum))
+				{
+					return false;
+				}
+
+				var sha256OfMd5 = SHA256.HashData(hash); // SHA256(MD5) is certainly a choice
+				return rsa.VerifyHash(sha256OfMd5, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+			}
+
+			if (SignatureType != ESignatureType.FullFile)
+			{
+				return false;
+			}
+
 			using var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeSignature);
 
 			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);

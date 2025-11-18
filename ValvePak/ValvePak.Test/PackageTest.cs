@@ -67,7 +67,7 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("addons\\chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
 				Assert.That(package.FindEntry("addons/chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
@@ -78,7 +78,7 @@ namespace Tests
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/chess.vdf"), Is.Null);
 				Assert.That(package.FindEntry(string.Empty), Is.Null);
 				Assert.That(package.FindEntry(" "), Is.Null);
-			});
+			}
 		}
 
 		[Test]
@@ -90,7 +90,7 @@ namespace Tests
 			package.OptimizeEntriesForBinarySearch();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("addons\\chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
 				Assert.That(package.FindEntry("addons/chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
@@ -101,7 +101,7 @@ namespace Tests
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/chess.vdf"), Is.Null);
 				Assert.That(package.FindEntry(string.Empty), Is.Null);
 				Assert.That(package.FindEntry(" "), Is.Null);
-			});
+			}
 
 			foreach (var extension in package.Entries!.Values)
 			{
@@ -121,7 +121,7 @@ namespace Tests
 			package.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("ADDONS\\chess\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
 				Assert.That(package.FindEntry("addons/CHESS\\chess.vdf")?.CRC32, Is.EqualTo(0xA4115395));
@@ -131,7 +131,7 @@ namespace Tests
 
 				Assert.That(package.FindEntry("\\addons/CHESS/hello_github_reader.vdf"), Is.Null);
 				Assert.That(package.FindEntry("\\addons/hello_github_reader/CHESS.vdf"), Is.Null);
-			});
+			}
 
 			foreach (var extension in package.Entries!.Values)
 			{
@@ -150,13 +150,13 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
 				Assert.That(package.FindEntry("\\kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
 				Assert.That(package.FindEntry("/kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
 				Assert.That(package.FindEntry("\\/kitten.jpg")?.CRC32, Is.EqualTo(0x9C800116));
-			});
+			}
 		}
 
 		[Test]
@@ -206,7 +206,7 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("test")?.CRC32, Is.EqualTo(0x0BA144CC));
 				Assert.That(package.FindEntry("folder with space/test")?.CRC32, Is.EqualTo(0xBF108706));
@@ -218,7 +218,7 @@ namespace Tests
 				Assert.That(package.FindEntry("uppercasefolder/UpperCaseFile.txt"), Is.Null);
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT"), Is.Null);
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt2"), Is.Null);
-			});
+			}
 		}
 
 		[Test]
@@ -258,7 +258,7 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("test")?.GetFullPath(), Is.EqualTo("test"));
 				Assert.That(package.FindEntry("folder with space/test")?.GetFullPath(), Is.EqualTo("folder with space/test"));
@@ -270,7 +270,7 @@ namespace Tests
 				Assert.That(package.FindEntry("folder with space/test")?.GetFileName(), Is.EqualTo("test"));
 				Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.GetFileName(), Is.EqualTo("space_extension. txt"));
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.GetFileName(), Is.EqualTo("bad_file_forfun.txt"));
-			});
+			}
 		}
 
 		[Test]
@@ -281,14 +281,14 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.FindEntry("test")?.ToString(), Is.EqualTo("test crc=0xba144cc metadatasz=0 fnumber=0 ofs=0x00 sz=39"));
 				Assert.That(package.FindEntry("folder with space/test")?.ToString(), Is.EqualTo("folder with space/test crc=0xbf108706 metadatasz=0 fnumber=0 ofs=0x52 sz=41"));
 				Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.ToString(), Is.EqualTo("folder with space/space_extension. txt crc=0x9321fc0 metadatasz=0 fnumber=0 ofs=0x7b sz=30"));
 				Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.ToString(), Is.EqualTo("uppercasefolder/bad_file_forfun.txt crc=0x15c1490f metadatasz=0 fnumber=0 ofs=0xa2 sz=2"));
 				Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.ToString(), Is.EqualTo("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43"));
-			});
+			}
 		}
 
 		[Test]
@@ -315,7 +315,7 @@ namespace Tests
 
 			package.ReadEntry(file, out var allBytes);
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(file.ToString(), Is.EqualTo("lorem.txt crc=0xf2cafa54 metadatasz=56 fnumber=32767 ofs=0x00 sz=588"));
 				Assert.That(file.CRC32, Is.EqualTo(0xF2CAFA54));
@@ -330,7 +330,7 @@ namespace Tests
 					"faucibus erat, vel fringilla purus scelerisque tempor. Proin feugiat blandit sapien eget tempus. Praesent gravida in " +
 					"risus a accumsan. Praesent egestas tincidunt dui nec laoreet. Sed ac lacus non tortor consectetur consectetur a ac " +
 					"lacus. In rhoncus turpis a nisl volutpat, nec cursus urna tincidunt.\n")));
-			});
+			}
 		}
 
 		[Test]
@@ -395,7 +395,7 @@ namespace Tests
 		}
 
 		[Test]
-		public void ParsesCS2VPKWithInvalidSignature()
+		public void ParsesCS2VPKWithRSA4096Signature()
 		{
 			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "cs2_new_signature.vpk");
 
@@ -404,12 +404,34 @@ namespace Tests
 
 			package.VerifyHashes();
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(package.Signature, Is.Null);
 				Assert.That(package.PublicKey, Is.Null);
+				Assert.That(package.SignatureType, Is.EqualTo(ESignatureType.OnlyFileChecksum));
 				Assert.That(package.IsSignatureValid(), Is.True);
-			});
+			}
+		}
+
+		[Test]
+		public void ReadCSGOPak01WithRSA4096Signature()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "cs2_new_signature_actually_signed.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			package.VerifyHashes();
+
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(package.SignatureType, Is.EqualTo(ESignatureType.OnlyFileChecksum));
+				Assert.That(package.PublicKey, Is.Not.Null);
+				Assert.That(package.Signature, Is.Not.Null);
+				Assert.That(package.PublicKey!, Has.Length.EqualTo(550));
+				Assert.That(package.Signature!, Has.Length.EqualTo(512));
+				Assert.That(package.IsSignatureValid(), Is.True);
+			}
 		}
 
 		[Test]
@@ -538,20 +560,20 @@ namespace Tests
 				}
 			}
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(data, Has.Count.EqualTo(3));
 				Assert.That(data["kitten.jpg"], Is.EqualTo("1C03B452FEE5274B0BC1FA1A866EE6C8FA0D43AA464C6BCFB3AB531F6E813081"));
 				Assert.That(data["steammessages_base.proto"], Is.EqualTo("FCC96AE59EE6BB9EEC4E16A50C928EFD3FB16E1CCA49E38BD2FA8391AB7936BE"));
 				Assert.That(data["steammessages_clientserver.proto"], Is.EqualTo("1F90C38527D0853B4713942668F2DC83F433DBE919C002825A4526138A200428"));
-			});
+			}
 
-			Assert.Multiple(() =>
+			using (Assert.EnterMultipleScope())
 			{
 				Assert.That(flatEntries["kitten"].TotalLength, Is.EqualTo(16361));
 				Assert.That(flatEntries["steammessages_base"].TotalLength, Is.EqualTo(2563));
 				Assert.That(flatEntries["steammessages_clientserver"].TotalLength, Is.EqualTo(39177));
-			});
+			}
 		}
 	}
 }

@@ -213,15 +213,28 @@ typedef struct {
 
 // Signature Section
 typedef struct {
-    int PublicKeySize <comment="Size of public key">;
+    int PublicKeySize <comment="Size of public key or magic number">;
 
-    // CS2 has a special case where SignatureSectionSize is 20 and PublicKeySize equals MAGIC
-    if (header.SignatureSectionSize == 20 && PublicKeySize == VPK_MAGIC) {
-        // CS2 special case - just skip the rest
-        ubyte Padding[16];
+    // New format with magic number
+    if (PublicKeySize == VPK_MAGIC) {
+        uint SignatureType <comment="Signature format version (0=RSALegacy, 1=RSA4096)">;
+        int ActualPublicKeySize <comment="Actual size of public key">;
+        int SignatureSize <comment="Size of signature">;
+        int Reserved <comment="Reserved field">;
+
+        if (ActualPublicKeySize > 0 && SignatureSize > 0) {
+            ubyte PublicKey[ActualPublicKeySize] <comment="Public key data">;
+            ubyte Signature[SignatureSize] <comment="Signature data">;
+        }
         return;
     }
 
+    // Old format - check for empty signature section
+    if (header.SignatureSectionSize == 20) {
+        return;
+    }
+
+    // Old format with data
     if (PublicKeySize > 0) {
         ubyte PublicKey[PublicKeySize] <comment="Public key data">;
     }

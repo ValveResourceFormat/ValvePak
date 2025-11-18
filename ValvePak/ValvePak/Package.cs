@@ -99,6 +99,11 @@ namespace SteamDatabase.ValvePak
 		public byte[]? Signature { get; private set; }
 
 		/// <summary>
+		/// Gets the signature type.
+		/// </summary>
+		public ESignatureType SignatureType { get; private set; } = ESignatureType.Unknown;
+
+		/// <summary>
 		/// Gets the package entries.
 		/// </summary>
 		public Dictionary<string, List<PackageEntry>>? Entries { get; private set; }
