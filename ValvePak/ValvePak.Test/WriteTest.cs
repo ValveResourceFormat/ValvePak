@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Text;
 using NUnit.Framework;
@@ -163,6 +164,146 @@ namespace Tests
 				Assert.That(file.DirectoryName, Is.EqualTo("a/b/c"));
 				Assert.That(file.FileName, Is.EqualTo("d"));
 			}
+		}
+
+		[Test]
+		public void WriteThrowsWhenIsDirVPK()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "steamdb_test_dir.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			using var output = new MemoryStream();
+			var ex = Assert.Throws<InvalidOperationException>(() => package.Write(output));
+			Assert.That(ex.Message, Is.EqualTo("This package was opened from a _dir.vpk, writing back is currently unsupported."));
+		}
+
+		[Test]
+		public void WriteThrowsOnNonSeekableStream()
+		{
+			using var package = new Package();
+			package.AddFile("test.txt", Encoding.UTF8.GetBytes("hello"));
+
+			using var nonSeekable = new NonSeekableStream();
+			var ex = Assert.Throws<InvalidOperationException>(() => package.Write(nonSeekable));
+			Assert.That(ex.Message, Is.EqualTo("Stream must be seekable and readable."));
+		}
+
+		[Test]
+		public void AddFileThrowsOnNullFilePath()
+		{
+			using var package = new Package();
+			Assert.Throws<ArgumentNullException>(() => package.AddFile(null!, []));
+		}
+
+		[Test]
+		public void RemoveFileThrowsOnNullEntry()
+		{
+			using var package = new Package();
+			Assert.Throws<ArgumentNullException>(() => package.RemoveFile(null!));
+		}
+
+		[Test]
+		public void RemoveFileReturnsFalseOnEmptyPackage()
+		{
+			using var package = new Package();
+			var result = package.RemoveFile(new PackageEntry
+			{
+				FileName = "test",
+				TypeName = "txt",
+				DirectoryName = " ",
+			});
+			Assert.That(result, Is.False);
+		}
+
+		[Test]
+		public void WriteAndVerifyRoundTrip()
+		{
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				package.AddFile("hello.txt", Encoding.UTF8.GetBytes("world"));
+				package.AddFile("folder/image.jpg", Encoding.UTF8.GetBytes("not really a jpg"));
+				package.Write(output);
+			}
+
+			output.Position = 0;
+
+			using var readBack = new Package();
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(readBack.Version, Is.EqualTo(2));
+				Assert.That(readBack.HeaderSize, Is.GreaterThan(0u));
+				Assert.That(readBack.TreeSize, Is.GreaterThan(0u));
+				Assert.That(readBack.FileDataSectionSize, Is.GreaterThan(0u));
+				Assert.That(readBack.OtherMD5SectionSize, Is.EqualTo(48u));
+			}
+
+			Assert.DoesNotThrow(() => readBack.VerifyHashes());
+		}
+
+		[Test]
+		public void WriteToFile()
+		{
+			var tempFile = Path.GetTempFileName();
+
+			try
+			{
+				using (var package = new Package())
+				{
+					package.AddFile("test.txt", Encoding.UTF8.GetBytes("hello from file"));
+					package.Write(tempFile);
+				}
+
+				using var readBack = new Package();
+				readBack.Read(tempFile);
+				readBack.VerifyHashes();
+
+				var entry = readBack.FindEntry("test.txt");
+				Assert.That(entry, Is.Not.Null);
+
+				readBack.ReadEntry(entry, out var data);
+				Assert.That(Encoding.UTF8.GetString(data), Is.EqualTo("hello from file"));
+			}
+			finally
+			{
+				File.Delete(tempFile);
+			}
+		}
+
+		[Test]
+		public void RemoveFileReturnsFalseForWrongType()
+		{
+			using var package = new Package();
+			package.AddFile("test.txt", []);
+
+			var result = package.RemoveFile(new PackageEntry
+			{
+				FileName = "test",
+				TypeName = "jpg",
+				DirectoryName = " ",
+			});
+
+			Assert.That(result, Is.False);
+		}
+
+		private sealed class NonSeekableStream : Stream
+		{
+			public override bool CanRead => true;
+			public override bool CanSeek => false;
+			public override bool CanWrite => true;
+			public override long Length => 0;
+			public override long Position { get => 0; set { } }
+			public override void Flush() { }
+			public override int Read(byte[] buffer, int offset, int count) => 0;
+			public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+			public override void SetLength(long value) { }
+			public override void Write(byte[] buffer, int offset, int count) { }
 		}
 	}
 }

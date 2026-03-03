@@ -534,6 +534,95 @@ namespace Tests
 			Assert.DoesNotThrow(() => package.VerifyChunkHashes(null));
 		}
 
+		[Test]
+		public void SetFileNameStripsVpkExtensionAndDirSuffix()
+		{
+			using var package1 = new Package();
+			package1.SetFileName("foo_dir.vpk");
+
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(package1.FileName, Is.EqualTo("foo"));
+				Assert.That(package1.IsDirVPK, Is.True);
+			}
+
+			using var package2 = new Package();
+			package2.SetFileName("bar.vpk");
+
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(package2.FileName, Is.EqualTo("bar"));
+				Assert.That(package2.IsDirVPK, Is.False);
+			}
+		}
+
+		[Test]
+		public void VerifyHashesThrowsOnVersion1()
+		{
+			using var package = new Package();
+			package.SetFileName("a.vpk");
+
+			// VPK v1 header: correct magic, version 1, tree size 1
+			using var ms = new MemoryStream([0x34, 0x12, 0xAA, 0x55, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+			package.Read(ms);
+
+			var ex = Assert.Throws<InvalidDataException>(() => package.VerifyHashes());
+			Assert.That(ex.Message, Is.EqualTo("Only version 2 is supported."));
+		}
+
+		[Test]
+		public void VerifyFileChecksumsDoesNothingOnNullEntries()
+		{
+			using var package = new Package();
+			Assert.DoesNotThrow(() => package.VerifyFileChecksums());
+		}
+
+		[Test]
+		public void VerifyFileChecksumsWithProgressReporter()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "broken_dir.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			var reports = new List<string>();
+			var progress = new Progress<string>(report => reports.Add(report));
+			package.VerifyFileChecksums(progress);
+
+			Assert.That(reports, Is.Not.Empty);
+		}
+
+		[Test]
+		public void DisposeCanBeCalledMultipleTimes()
+		{
+			var package = new Package();
+			package.Dispose();
+			Assert.DoesNotThrow(() => package.Dispose());
+		}
+
+		[Test]
+		public void IsSignatureValidReturnsTrueWhenNoSignature()
+		{
+			using var package = new Package();
+			Assert.That(package.IsSignatureValid(), Is.True);
+		}
+
+		[Test]
+		public void IsSignatureValidReturnsFalseAfterDispose()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "platform_misc_dir.vpk");
+
+			var package = new Package();
+			package.Read(path);
+
+			Assert.That(package.Signature, Is.Not.Null);
+			Assert.That(package.PublicKey, Is.Not.Null);
+
+			package.Dispose();
+
+			Assert.That(package.IsSignatureValid(), Is.False);
+		}
+
 		private static void TestVPKExtraction(string path)
 		{
 			using var package = new Package();

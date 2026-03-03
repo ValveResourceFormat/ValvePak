@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -11,6 +12,7 @@ namespace SteamDatabase.ValvePak
 	/// </summary>
 	public partial class Package : IDisposable
 	{
+		[ExcludeFromCodeCoverage]
 		sealed class SubStream : Stream, IDisposable
 		{
 #pragma warning disable CA2213 // Disposable fields should be disposed

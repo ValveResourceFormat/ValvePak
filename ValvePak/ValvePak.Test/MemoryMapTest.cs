@@ -84,5 +84,28 @@ namespace Tests
 			Assert.That(stream2, Is.InstanceOf<MemoryStream>());
 			VerifyProto(stream2);
 		}
+
+		[Test]
+		public void GetMemoryMappedStreamIfPossibleThrowsOnNullEntry()
+		{
+			using var package = new Package();
+			Assert.Throws<ArgumentNullException>(() => package.GetMemoryMappedStreamIfPossible(null!));
+		}
+
+		[Test]
+		public void GetMemoryMappedStreamIfPossibleWithPreloadedBytesReturnsMemoryStream()
+		{
+			var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "preload.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			var entry = package.FindEntry("lorem.txt");
+			Assert.That(entry, Is.Not.Null);
+			Assert.That(entry.SmallData, Has.Length.GreaterThan(0));
+
+			using var stream = package.GetMemoryMappedStreamIfPossible(entry);
+			Assert.That(stream, Is.InstanceOf<MemoryStream>());
+		}
 	}
 }
