@@ -1,14 +1,25 @@
+using Microsoft.VisualBasic.FileIO;
 using System;
 using System.Buffers;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace SteamDatabase.ValvePak
 {
+	internal sealed class WriteEntry(ushort archiveIndex, uint fileOffset, PackageEntry entry)
+	{
+		internal ushort ArchiveIndex { get; set; } = archiveIndex;
+		internal uint FileOffset { get; set; } = fileOffset;
+		internal PackageEntry Entry { get; set; } = entry;
+	}
 	public partial class Package
 	{
 		/// <summary>
@@ -107,37 +118,38 @@ namespace SteamDatabase.ValvePak
 		/// Opens and writes the given filename.
 		/// </summary>
 		/// <param name="filename">The file to open and write.</param>
-		public void Write(string filename)
+		public void Write(string filename, int maxFileBytes = int.MaxValue)
 		{
-			using var fs = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+			ArgumentOutOfRangeException.ThrowIfNegative(maxFileBytes);
+
+			using var fs = new FileStream(filename, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
 			fs.SetLength(0);
 
-			Write(fs);
+			Write(fs, maxFileBytes);
 		}
 
 		/// <summary>
 		/// Writes to the given <see cref="Stream"/>.
 		/// </summary>
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
-		public void Write(Stream stream)
+		public void Write(FileStream stream, int maxFileBytes)
 		{
-			if (IsDirVPK)
-			{
-				throw new InvalidOperationException("This package was opened from a _dir.vpk, writing back is currently unsupported.");
-			}
 
 			ArgumentNullException.ThrowIfNull(stream);
 
 			if (!stream.CanSeek || !stream.CanRead)
-			{
 				throw new InvalidOperationException("Stream must be seekable and readable.");
-			}
 
 			using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
 
 			// TODO: input.SetLength()
 			var streamOffset = stream.Position;
-			ulong fileDataSectionSize = 0;
+
+			List<PackageEntry> entries = Entries.SelectMany(e => e.Value).ToList();
+
+			if (entries.Any(e => e.TotalLength > maxFileBytes))
+				throw new InvalidOperationException("There are files exceeding max file bytes");
+
 
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
@@ -158,13 +170,6 @@ namespace SteamDatabase.ValvePak
 					}
 
 					directoryEntries.Add(entry);
-
-					fileDataSectionSize += entry.TotalLength;
-
-					if (fileDataSectionSize > int.MaxValue)
-					{
-						throw new InvalidOperationException("Package contents exceed 2GiB, and splitting packages is currently unsupported.");
-					}
 				}
 			}
 
@@ -174,15 +179,20 @@ namespace SteamDatabase.ValvePak
 			writer.Write(0); // TreeSize, to be updated later
 			writer.Write(0); // FileDataSectionSize, to be updated later
 			writer.Write(0); // ArchiveMD5SectionSize
-			writer.Write(48); // OtherMD5SectionSize
+			writer.Write(48); //OtherMD5SectionSize
 			writer.Write(0); // SignatureSectionSize
-
 			var headerSize = (int)(stream.Position - streamOffset);
-			uint fileOffset = 0;
-
 			const byte NullByte = 0;
 
-			// File tree data
+			bool isSingleFile = entries.Sum(s => s.TotalLength) + headerSize + 64 <= maxFileBytes;
+
+			var groups = CreatePacketsGroup(entries, maxFileBytes, isSingleFile);
+
+			if (groups.Count >= 0x7FFF)
+				throw new InvalidOperationException("The number of packages exceeds 32766");
+
+
+			uint fileOffset = 0;
 			foreach (var typeEntries in tree)
 			{
 				writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
@@ -197,12 +207,24 @@ namespace SteamDatabase.ValvePak
 					{
 						var fileLength = entry.TotalLength;
 
+						var fullPath = entry.GetFullPath();
+						WriteEntry writeEntry = null;
+
+						foreach (var group in groups)
+						{
+							if (group.TryGetValue(fullPath, out writeEntry))
+								break;
+						}
+						if (writeEntry is null)
+							throw new InvalidOperationException("No need write entry found");
+
+
 						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
 						writer.Write(NullByte);
 						writer.Write(entry.CRC32);
 						writer.Write((short)0); // SmallData, we will put it into data instead
-						writer.Write(entry.ArchiveIndex);
-						writer.Write(fileOffset);
+						writer.Write(writeEntry.ArchiveIndex);
+						writer.Write(writeEntry.FileOffset);
 						writer.Write(fileLength);
 						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
 
@@ -217,21 +239,46 @@ namespace SteamDatabase.ValvePak
 
 			writer.Write(NullByte);
 
-			var fileTreeSize = stream.Position - headerSize;
-
-			// File data
-			foreach (var typeEntries in tree)
+			//clear sub file
+			for (ushort i = 0; i < 999; i++)
 			{
-				foreach (var directoryEntries in typeEntries.Value)
-				{
-					foreach (var entry in directoryEntries.Value)
-					{
-						ReadEntry(entry, out var fileData, validateCrc: false);
+				string sub_FilePath = GetSubFilePath(stream.Name, i);
+				if (File.Exists(sub_FilePath))
+					File.Delete(sub_FilePath);
+			}
 
-						writer.Write(fileData);
-					}
+			if (isSingleFile)
+			{
+				//Write file data
+				foreach (var writeEntry in groups[0].Values)
+				{
+					ReadEntry(writeEntry.Entry, out var fileData, validateCrc: false);
+					writer.Write(fileData);
 				}
 			}
+			else
+			{
+				//Create and write sub file data
+				for (ushort i = 0; i < groups.Count; i++)
+				{
+					string sub_FilePath = GetSubFilePath(stream.Name, i);
+
+					using var fs = new FileStream(sub_FilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+					using var writer_sub = new BinaryWriter(fs, Encoding.UTF8, leaveOpen: true);
+
+					var group = groups[i];
+					foreach (var writeEntry in group.Values)
+					{
+						ReadEntry(writeEntry.Entry, out var fileData, validateCrc: false);
+						writer_sub.Write(fileData);
+					}
+				}
+
+			}
+
+
+			long fileTreeSize = stream.Position - headerSize;
+
 
 			var afterFileData = stream.Position;
 			var fileDataSize = afterFileData - fileTreeSize - headerSize;
@@ -303,6 +350,77 @@ namespace SteamDatabase.ValvePak
 			{
 				ArrayPool<byte>.Shared.Return(buffer);
 			}
+		}
+
+		/// <summary>
+		/// Get the sub file name
+		/// </summary>
+		/// <param name="indexFilePath">Index file path</param>
+		/// <param name="indexNumber">Index number</param>
+		/// <returns></returns>
+		static string GetSubFilePath(string indexFilePath, ushort indexNumber)
+		{
+			FileInfo sub_FileInfo = new FileInfo(indexFilePath);
+
+			string sub_FileName = Path.GetFileNameWithoutExtension(sub_FileInfo.FullName);
+			if (sub_FileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase))
+				sub_FileName = $"{sub_FileName[..^4]}";
+
+			sub_FileName = $"{sub_FileName}_{indexNumber:D3}";
+			return $"{sub_FileInfo.Directory}\\{sub_FileName}{sub_FileInfo.Extension}";
+		}
+
+		/// <summary>
+		/// Split the current tree into multiple trees based on packet size
+		/// </summary>
+		/// <param name="mainTypeTree">Tree of data sources</param>
+		/// <param name="maxFileBytes">Maximum file byte count</param>
+		/// <returns>List of Trees</returns>
+
+		static List<Dictionary<string, WriteEntry>> CreatePacketsGroup(List<PackageEntry> entries, int maxFileBytes, bool isSingleFile)
+		{
+			List<Dictionary<string, WriteEntry>> groups = new List<Dictionary<string, WriteEntry>>();
+			uint totalLength = 0;
+			ushort archiveIndex = 0;
+			Dictionary<string, WriteEntry> group = new Dictionary<string, WriteEntry>();
+			groups.Add(group);
+
+			if (isSingleFile)
+			{
+				foreach (var entry in entries)
+				{
+					group.Add(entry.GetFullPath(), new(0x7FFF, totalLength, entry));
+					totalLength += entry.TotalLength;
+				}
+			}
+			else
+			{
+				group.Add(entries[0].GetFullPath(), new(archiveIndex, totalLength, entries[0]));
+				totalLength += entries[0].TotalLength;
+
+				entries.RemoveAt(0);
+				do
+				{
+					PackageEntry entry = entries.Find(e => e.TotalLength < (ulong)maxFileBytes - totalLength);
+					if (entry is not null)
+					{
+						group.Add(entry.GetFullPath(), new(archiveIndex, totalLength, entry));
+						totalLength += entry.TotalLength;
+						entries.Remove(entry);
+					}
+					else
+					{
+						group = new Dictionary<string, WriteEntry>();
+						groups.Add(group);
+						totalLength = 0;
+						archiveIndex++;
+					}
+
+				} while (entries.Count != 0);
+			}
+
+
+			return groups;
 		}
 	}
 }
