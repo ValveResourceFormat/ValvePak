@@ -48,28 +48,30 @@ namespace SteamDatabase.ValvePak
 				throw new InvalidDataException("Given file is not a VPK.");
 			}
 
-			Version = Reader.ReadUInt32();
+			var version = Reader.ReadUInt32();
 			TreeSize = Reader.ReadUInt32();
 
-			if (Version == 1)
+			if (version == 1)
 			{
 				// Nothing else
 			}
-			else if (Version == 2)
+			else if (version == 2)
 			{
 				FileDataSectionSize = Reader.ReadUInt32();
 				ArchiveMD5SectionSize = Reader.ReadUInt32();
 				OtherMD5SectionSize = Reader.ReadUInt32();
 				SignatureSectionSize = Reader.ReadUInt32();
 			}
-			else if (Version == 0x00030002) // Apex Legends, Titanfall
+			else if (version == 0x00030002) // Apex Legends, Titanfall
 			{
 				throw new NotSupportedException("Respawn uses customized vpk format which this library does not support.");
 			}
 			else
 			{
-				throw new InvalidDataException($"Bad VPK version. ({Version})");
+				throw new InvalidDataException($"Bad VPK version. ({version})");
 			}
+
+			Version = version;
 
 			HeaderSize = (uint)input.Position;
 

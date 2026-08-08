@@ -248,6 +248,88 @@ namespace Tests
 		}
 
 		[Test]
+		public void WriteVersion1Package()
+		{
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				Assert.That(package.Version, Is.EqualTo(2));
+
+				package.Version = 1;
+				package.AddFile("hello.txt", Encoding.UTF8.GetBytes("world"));
+				package.AddFile("folder/image.jpg", Encoding.UTF8.GetBytes("not really a jpg"));
+				package.Write(output);
+			}
+
+			output.Position = 0;
+
+			using var readBack = new Package();
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(readBack.Version, Is.EqualTo(1));
+				Assert.That(readBack.HeaderSize, Is.EqualTo(12u));
+				Assert.That(readBack.TreeSize, Is.GreaterThan(0u));
+				Assert.That(readBack.OtherMD5SectionSize, Is.EqualTo(0u));
+			}
+
+			var entry = readBack.FindEntry("hello.txt");
+			Assert.That(entry, Is.Not.Null);
+
+			readBack.ReadEntry(entry, out var data);
+			Assert.That(Encoding.UTF8.GetString(data), Is.EqualTo("world"));
+
+			Assert.DoesNotThrow(() => readBack.VerifyFileChecksums());
+		}
+
+		[Test]
+		public void WritePreservesVersionOfReadPackage()
+		{
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				package.Version = 1;
+				package.AddFile("hello.txt", Encoding.UTF8.GetBytes("world"));
+				package.Write(output);
+			}
+
+			output.Position = 0;
+
+			using var readBack = new Package();
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			using var output2 = new MemoryStream();
+			readBack.Write(output2);
+
+			output2.Position = 0;
+
+			using var readBack2 = new Package();
+			readBack2.SetFileName("test.vpk");
+			readBack2.Read(output2);
+
+			Assert.That(readBack2.Version, Is.EqualTo(1));
+
+			var entry = readBack2.FindEntry("hello.txt");
+			Assert.That(entry, Is.Not.Null);
+
+			readBack2.ReadEntry(entry, out var data);
+			Assert.That(Encoding.UTF8.GetString(data), Is.EqualTo("world"));
+		}
+
+		[Test]
+		public void SetVersionThrowsOnUnsupportedVersion()
+		{
+			using var package = new Package();
+			Assert.Throws<ArgumentOutOfRangeException>(() => package.Version = 0);
+			Assert.Throws<ArgumentOutOfRangeException>(() => package.Version = 3);
+		}
+
+		[Test]
 		public void WriteToFile()
 		{
 			var tempFile = Path.GetTempFileName();

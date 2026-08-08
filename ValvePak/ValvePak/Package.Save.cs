@@ -105,6 +105,8 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// Opens and writes the given filename.
+		///
+		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		/// </summary>
 		/// <param name="filename">The file to open and write.</param>
 		public void Write(string filename)
@@ -117,6 +119,8 @@ namespace SteamDatabase.ValvePak
 
 		/// <summary>
 		/// Writes to the given <see cref="Stream"/>.
+		///
+		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		/// </summary>
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
 		public void Write(Stream stream)
@@ -170,12 +174,16 @@ namespace SteamDatabase.ValvePak
 
 			// Header
 			writer.Write(MAGIC);
-			writer.Write(2); // Version
+			writer.Write(Version);
 			writer.Write(0); // TreeSize, to be updated later
-			writer.Write(0); // FileDataSectionSize, to be updated later
-			writer.Write(0); // ArchiveMD5SectionSize
-			writer.Write(48); // OtherMD5SectionSize
-			writer.Write(0); // SignatureSectionSize
+
+			if (Version >= 2)
+			{
+				writer.Write(0); // FileDataSectionSize, to be updated later
+				writer.Write(0); // ArchiveMD5SectionSize
+				writer.Write(48); // OtherMD5SectionSize
+				writer.Write(0); // SignatureSectionSize
+			}
 
 			var headerSize = (int)(stream.Position - streamOffset);
 			uint fileOffset = 0;
@@ -240,6 +248,14 @@ namespace SteamDatabase.ValvePak
 			// TODO: It is possible to precalculate these sizes to remove seeking
 			stream.Seek(streamOffset + (2 * sizeof(int)), SeekOrigin.Begin);
 			writer.Write((int)fileTreeSize);
+
+			if (Version < 2)
+			{
+				// Version 1 has no checksums
+				stream.Seek(afterFileData, SeekOrigin.Begin);
+				return;
+			}
+
 			writer.Write((int)fileDataSize);
 
 			// Calculate file hashes

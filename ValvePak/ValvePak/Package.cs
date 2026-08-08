@@ -39,9 +39,23 @@ namespace SteamDatabase.ValvePak
 		public bool IsDirVPK { get; private set; }
 
 		/// <summary>
-		/// Gets the VPK version.
+		/// Gets or sets the VPK version. This version is also used when writing the package.
+		///
+		/// Only versions 1 and 2 can be set. Version 1 does not contain MD5 checksums, and is used by older games such as Left 4 Dead 2.
 		/// </summary>
-		public uint Version { get; private set; }
+		public uint Version
+		{
+			get;
+			set
+			{
+				if (value is not (1 or 2))
+				{
+					throw new ArgumentOutOfRangeException(nameof(value), value, "Only versions 1 and 2 are supported.");
+				}
+
+				field = value;
+			}
+		} = 2;
 
 		/// <summary>
 		/// Gets the size in bytes of the header.
