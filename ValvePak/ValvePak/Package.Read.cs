@@ -269,7 +269,7 @@ namespace SteamDatabase.ValvePak
 				return;
 			}
 
-			var entries = (int)(ArchiveMD5SectionSize / 28); // 28 is sizeof(VPK_MD5SectionEntry), which is int + int + int + 16 chars
+			var entries = (int)(ArchiveMD5SectionSize / ChunkHashFraction.SectionEntrySize);
 
 			AccessPackFileHashes = new List<ChunkHashFraction>(entries);
 
@@ -355,7 +355,7 @@ namespace SteamDatabase.ValvePak
 
 			if (archiveIndex != 0x7FFF)
 			{
-				var fileName = GetArchiveIndexFullFilePath(archiveIndex);
+				var fileName = GetArchiveIndexFullFilePath(FileName, archiveIndex);
 
 				stream = new FileStream(fileName, FileMode.Open, FileAccess.Read);
 			}
@@ -413,7 +413,7 @@ namespace SteamDatabase.ValvePak
 				}
 				else
 				{
-					path = GetArchiveIndexFullFilePath(entry.ArchiveIndex);
+					path = GetArchiveIndexFullFilePath(FileName, entry.ArchiveIndex);
 				}
 
 				stream = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
@@ -431,9 +431,9 @@ namespace SteamDatabase.ValvePak
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private string GetArchiveIndexFullFilePath(ushort archiveIndex)
+		private static string GetArchiveIndexFullFilePath(string? baseFileName, ushort archiveIndex)
 		{
-			return $"{FileName}_{archiveIndex:D3}.vpk";
+			return $"{baseFileName}_{archiveIndex:D3}.vpk";
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -168,19 +168,32 @@ namespace SteamDatabase.ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(fileName);
 
+			FileName = StripDirVpkSuffixes(fileName, out var isDirVpk);
+
+			if (isDirVpk)
+			{
+				IsDirVPK = true;
+			}
+		}
+
+		/// <summary>
+		/// Strips the ".vpk" extension and the "_dir" suffix to produce the base name that chunk file names are built from.
+		/// </summary>
+		private static string StripDirVpkSuffixes(string fileName, out bool isDirVpk)
+		{
 			if (fileName.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
 			{
 				fileName = fileName[0..^4];
 			}
 
-			if (fileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase))
-			{
-				IsDirVPK = true;
+			isDirVpk = fileName.EndsWith("_dir", StringComparison.OrdinalIgnoreCase);
 
+			if (isDirVpk)
+			{
 				fileName = fileName[0..^4];
 			}
 
-			FileName = fileName;
+			return fileName;
 		}
 
 		/// <summary>

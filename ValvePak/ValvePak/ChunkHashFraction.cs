@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace SteamDatabase.ValvePak
 {
 	/// <summary>
@@ -5,6 +7,11 @@ namespace SteamDatabase.ValvePak
 	/// </summary>
 	public class ChunkHashFraction
 	{
+		/// <summary>
+		/// Size in bytes of a serialized entry in the archive hashes section.
+		/// </summary>
+		public const int SectionEntrySize = 28;
+
 		/// <summary>
 		/// Gets or sets the archive index.
 		/// </summary>
@@ -29,5 +36,14 @@ namespace SteamDatabase.ValvePak
 		/// Gets or sets the expected checksum.
 		/// </summary>
 		public required byte[] Checksum { get; set; }
+
+		internal void Write(BinaryWriter writer)
+		{
+			writer.Write(ArchiveIndex);
+			writer.Write((ushort)HashType);
+			writer.Write(Offset);
+			writer.Write(Length);
+			writer.Write(Checksum);
+		}
 	}
 }

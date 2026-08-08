@@ -198,6 +198,13 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		public void AddFileThrowsOnNullData()
+		{
+			using var package = new Package();
+			Assert.Throws<ArgumentNullException>(() => package.AddFile("test.txt", null!));
+		}
+
+		[Test]
 		public void RemoveFileThrowsOnNullEntry()
 		{
 			using var package = new Package();

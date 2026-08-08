@@ -76,6 +76,23 @@ package.RemoveFile(package.FindEntry("path/to/file.txt"));
 package.Write("pak01_dir.vpk");
 ```
 
+## Create a VPK split into chunk files
+
+Files added with `multiChunk` are written into numbered chunk files (`pak01_000.vpk`, `pak01_001.vpk`, ...) next to the directory file instead of into the directory file itself. A new chunk file is started once the current one reaches `WriteChunkSize` (200 MiB by default). The directory file contains MD5 hashes of the chunk files, which can be verified with `VerifyChunkHashes`.
+
+```csharp
+using var package = new Package();
+
+// Optionally lower the maximum chunk file size, in bytes
+package.WriteChunkSize = 100 * 1024 * 1024;
+
+package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"), multiChunk: true);
+
+// Multi chunk packages must be written to a path so that the chunk files can be created,
+// and the filename should end with "_dir.vpk"
+package.Write("pak01_dir.vpk");
+```
+
 ## Optimize for many lookups
 
 By default, `FindEntry` performs a linear scan. If you need to look up many files, call `OptimizeEntriesForBinarySearch()` before `Read()` to sort entries and use binary search instead. You can also pass `StringComparison.OrdinalIgnoreCase` for case-insensitive lookups.
