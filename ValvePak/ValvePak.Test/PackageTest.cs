@@ -585,11 +585,16 @@ namespace Tests
 			using var package = new Package();
 			package.Read(path);
 
-			var reports = new List<string>();
-			var progress = new Progress<string>(report => reports.Add(report));
+			var progress = new SynchronousProgress();
 			package.VerifyFileChecksums(progress);
 
-			Assert.That(reports, Is.Not.Empty);
+			Assert.That(progress.Reports, Is.Not.Empty);
+		}
+
+		private sealed class SynchronousProgress : IProgress<string>
+		{
+			public List<string> Reports { get; } = [];
+			public void Report(string value) => Reports.Add(value);
 		}
 
 		[Test]
