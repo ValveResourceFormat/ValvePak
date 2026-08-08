@@ -8,7 +8,7 @@ using SteamDatabase.ValvePak;
 namespace Tests
 {
 	[TestFixture]
-	public class MemoryMappedTest
+	internal sealed class MemoryMappedTest
 	{
 		private static void VerifyKitten(Stream stream) => Assert.That(Convert.ToHexString(SHA256.HashData(stream)), Is.EqualTo("1C03B452FEE5274B0BC1FA1A866EE6C8FA0D43AA464C6BCFB3AB531F6E813081"));
 		private static void VerifyProto(Stream stream) => Assert.That(Convert.ToHexString(SHA256.HashData(stream)), Is.EqualTo("FCC96AE59EE6BB9EEC4E16A50C928EFD3FB16E1CCA49E38BD2FA8391AB7936BE"));

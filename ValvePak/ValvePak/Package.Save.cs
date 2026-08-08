@@ -253,7 +253,7 @@ namespace SteamDatabase.ValvePak
 				using var fileTreeMD5 = MD5.Create();
 				using var fullFileMD5 = MD5.Create();
 
-				stream.Read(buffer, 0, headerSize);
+				stream.ReadExactly(buffer, 0, headerSize);
 				fullFileMD5.TransformBlock(buffer, 0, headerSize, null, 0);
 
 				int bytesRead;

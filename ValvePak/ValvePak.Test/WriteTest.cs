@@ -7,7 +7,7 @@ using SteamDatabase.ValvePak;
 namespace Tests
 {
 	[TestFixture]
-	public class WriteTest
+	internal sealed class WriteTest
 	{
 		[Test]
 		public void CreateNewPackage()

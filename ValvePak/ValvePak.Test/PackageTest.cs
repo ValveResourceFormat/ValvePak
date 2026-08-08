@@ -9,7 +9,7 @@ using SteamDatabase.ValvePak;
 namespace Tests
 {
 	[TestFixture]
-	public class PackageTest
+	internal sealed class PackageTest
 	{
 		[Test]
 		public void ParseVPK()
@@ -615,8 +615,11 @@ namespace Tests
 			var package = new Package();
 			package.Read(path);
 
-			Assert.That(package.Signature, Is.Not.Null);
-			Assert.That(package.PublicKey, Is.Not.Null);
+			using (Assert.EnterMultipleScope())
+			{
+				Assert.That(package.Signature, Is.Not.Null);
+				Assert.That(package.PublicKey, Is.Not.Null);
+			}
 
 			package.Dispose();
 
