@@ -4,7 +4,7 @@ using System.Text;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
-namespace Tests
+namespace ValvePak.Test
 {
 	[TestFixture]
 	internal sealed class WriteTest
@@ -273,7 +273,7 @@ namespace Tests
 				Assert.That(readBack.Version, Is.EqualTo(1));
 				Assert.That(readBack.HeaderSize, Is.EqualTo(12u));
 				Assert.That(readBack.TreeSize, Is.GreaterThan(0u));
-				Assert.That(readBack.OtherMD5SectionSize, Is.EqualTo(0u));
+				Assert.That(readBack.OtherMD5SectionSize, Is.Zero);
 			}
 
 			var entry = readBack.FindEntry("hello.txt");

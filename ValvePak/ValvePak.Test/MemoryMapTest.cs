@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
-namespace Tests
+namespace ValvePak.Test
 {
 	[TestFixture]
 	internal sealed class MemoryMappedTest

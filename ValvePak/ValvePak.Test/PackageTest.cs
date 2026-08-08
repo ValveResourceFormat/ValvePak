@@ -6,7 +6,7 @@ using System.Text;
 using NUnit.Framework;
 using SteamDatabase.ValvePak;
 
-namespace Tests
+namespace ValvePak.Test
 {
 	[TestFixture]
 	internal sealed class PackageTest
