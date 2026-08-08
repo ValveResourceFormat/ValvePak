@@ -26,13 +26,16 @@ jobs:
         dotnet-version: 10.0.x
 
     - name: Build
-      run: dotnet build -c Release ValvePak/ValvePak.sln
+      run: dotnet build -c Release
+      working-directory: ValvePak
 
     - name: Test
-      run: dotnet test -c Release ValvePak/ValvePak.Test/ValvePak.Test.csproj /p:CollectCoverage=true /p:CoverletOutputFormat=lcov /p:CoverletOutput='./lcov.info' /p:Include="[ValvePak*]*"
+      run: dotnet test -c Release /p:CollectCoverage=true /p:CoverletOutputFormat=lcov /p:CoverletOutput='./lcov.info' /p:Include="[ValvePak*]*"
+      working-directory: ValvePak/ValvePak.Test
 
     - name: Create nupkg
-      run: dotnet pack --configuration Release ValvePak/ValvePak/ValvePak.csproj
+      run: dotnet pack --configuration Release
+      working-directory: ValvePak/ValvePak
 
     - name: Upload nupkg
       uses: actions/upload-artifact@v7
