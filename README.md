@@ -16,16 +16,11 @@ using var package = new Package();
 // Open a vpk file
 package.Read("pak01_dir.vpk");
 
-// Can also pass in a stream
-package.Read(File.OpenRead("pak01_dir.vpk"));
-
-// Optionally verify hashes and signatures of the file if there are any
-package.VerifyHashes();
-
 // Find a file, this returns a PackageEntry
 var file = package.FindEntry("path/to/file.txt");
 
-if (file != null) {
+if (file != null)
+{
 	// Read a file to a byte array
 	package.ReadEntry(file, out byte[] fileContents);
 
@@ -39,73 +34,35 @@ if (file != null) {
 
 Do note that files such as `pak01_001.vpk` are just data files, you have to open `pak01_dir.vpk`.
 
+To read from a stream instead of a path, set the file name first so that the chunk files can be located:
+
+```csharp
+using var package = new Package();
+package.SetFileName("pak01_dir.vpk");
+package.Read(File.OpenRead("pak01_dir.vpk"));
+```
+
 ## Extract all files
 
 ```csharp
 using var package = new Package();
 package.Read("pak01_dir.vpk");
 
-foreach (var group in package.Entries)
+var outputDirectory = "extracted";
+
+foreach (var group in package.Entries!)
 {
 	foreach (var entry in group.Value)
 	{
-		var filePath = entry.GetFullPath();
+		var filePath = Path.Combine(outputDirectory, entry.GetFullPath());
 
 		package.ReadEntry(entry, out byte[] data);
 
 		// Create the directory if needed, then write the file
-		Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+		Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
 		File.WriteAllBytes(filePath, data);
 	}
 }
-```
-
-## Create a VPK
-
-```csharp
-using var package = new Package();
-
-// Add files to the package
-package.AddFile("path/to/file.txt", File.ReadAllBytes("file.txt"));
-package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"));
-
-// Remove a file from the package
-package.RemoveFile(package.FindEntry("path/to/file.txt"));
-
-// Write the package to disk
-package.Write("pak01_dir.vpk");
-```
-
-## Create a VPK split into chunk files
-
-Files added with `multiChunk` are written into numbered chunk files (`pak01_000.vpk`, `pak01_001.vpk`, ...) next to the directory file instead of into the directory file itself. A new chunk file is started once the current one reaches `WriteChunkSize` (200 MiB by default). The directory file contains MD5 hashes of the chunk files, which can be verified with `VerifyChunkHashes`.
-
-```csharp
-using var package = new Package();
-
-// Optionally lower the maximum chunk file size, in bytes
-package.WriteChunkSize = 100 * 1024 * 1024;
-
-package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"), multiChunk: true);
-
-// Multi chunk packages must be written to a path so that the chunk files can be created,
-// and the filename should end with "_dir.vpk"
-package.Write("pak01_dir.vpk");
-```
-
-## Optimize for many lookups
-
-By default, `FindEntry` performs a linear scan. If you need to look up many files, call `OptimizeEntriesForBinarySearch()` before `Read()` to sort entries and use binary search instead. You can also pass `StringComparison.OrdinalIgnoreCase` for case-insensitive lookups.
-
-```csharp
-using var package = new Package();
-
-// Call before Read() to enable binary search for FindEntry
-package.OptimizeEntriesForBinarySearch();
-package.Read("pak01_dir.vpk");
-
-// FindEntry calls are now significantly faster
-var file = package.FindEntry("path/to/file.txt");
 ```
 
 ## Read into a user-provided buffer
@@ -129,7 +86,7 @@ try
 {
 	package.ReadEntry(entry, buffer, validateCrc: true);
 
-	// Use buffer[..entry.TotalLength] here
+	// Use buffer[..(int)entry.TotalLength] here
 }
 finally
 {
@@ -147,13 +104,28 @@ var entry = package.FindEntry("path/to/file.txt");
 using var stream = package.GetMemoryMappedStreamIfPossible(entry);
 ```
 
+## Optimize for many lookups
+
+By default, `FindEntry` performs a linear scan. If you need to look up many files, call `OptimizeEntriesForBinarySearch()` before `Read()` to sort entries and use binary search instead. You can also pass `StringComparison.OrdinalIgnoreCase` for case-insensitive lookups.
+
+```csharp
+using var package = new Package();
+
+// Call before Read() to enable binary search for FindEntry
+package.OptimizeEntriesForBinarySearch();
+package.Read("pak01_dir.vpk");
+
+// FindEntry calls are now significantly faster
+var file = package.FindEntry("path/to/file.txt");
+```
+
 ## Verification
 
 ```csharp
 using var package = new Package();
 package.Read("pak01_dir.vpk");
 
-// Verify MD5 hashes of the directory tree and whole file
+// Verify MD5 hashes of the directory tree and whole file (throws on version 1 packages)
 package.VerifyHashes();
 
 // Verify MD5/Blake3 hashes of individual chunk files (pak01_000.vpk, pak01_001.vpk, ...)
@@ -164,4 +136,56 @@ package.VerifyFileChecksums();
 
 // Verify the RSA signature if the package is signed
 bool valid = package.IsSignatureValid();
+```
+
+## Create a VPK
+
+```csharp
+using var package = new Package();
+
+// Add files to the package
+package.AddFile("path/to/file.txt", File.ReadAllBytes("file.txt"));
+package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"));
+
+// Remove a file from the package
+package.RemoveFile(package.FindEntry("path/to/file.txt")!);
+
+// Write the package to disk
+package.Write("pak01.vpk");
+```
+
+All file data is stored in the single written file, which is limited to 2 GiB. To go beyond that, split the package into chunk files as described below.
+
+### Modify an existing VPK
+
+A package that was read can have files added or removed and then be written to a new file. This only works for packages that are not split into chunk files. Writing back a package opened from a `_dir.vpk` is not supported.
+
+```csharp
+using var package = new Package();
+package.Read("pak01.vpk");
+
+package.AddFile("new/file.txt", File.ReadAllBytes("file.txt"));
+package.RemoveFile(package.FindEntry("old/file.txt")!);
+
+package.Write("pak01_modified.vpk");
+```
+
+### Split into chunk files
+
+Files added with `multiChunk` are written into numbered chunk files (`pak01_000.vpk`, `pak01_001.vpk`, ...) next to the directory file instead of into the directory file itself. A new chunk file is started once the current one reaches `WriteChunkSize` (200 MiB by default). The directory file contains MD5 hashes of the chunk files, which can be verified with `VerifyChunkHashes`.
+
+```csharp
+using var package = new Package();
+
+// Optionally lower the maximum chunk file size, in bytes
+package.WriteChunkSize = 100 * 1024 * 1024;
+
+package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"), multiChunk: true);
+
+// Files added without multiChunk still go into the directory file
+package.AddFile("manifest.txt", File.ReadAllBytes("manifest.txt"));
+
+// Multi chunk packages must be written to a path so that the chunk files can be created,
+// and the filename should end with "_dir.vpk"
+package.Write("pak01_dir.vpk");
 ```
