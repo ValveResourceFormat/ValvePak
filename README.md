@@ -1,16 +1,25 @@
-<h1 align="center"><img src="./Misc/logo.png" width="64" height="64" align="center"> Valve Pak for .NET</h1>
+<h1 align="center">
+  <img src="./Misc/logo.png" alt="Logo" width="128">
+  <br>Valve Pak for .NET
+</h1>
 
 <p align="center">
-    <a href="https://github.com/ValveResourceFormat/ValvePak/actions" title="Build Status"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/ValveResourceFormat/ValvePak/ci.yml?logo=github&label=Build&logoColor=ffffff&style=for-the-badge&branch=master"></a>
-    <a href="https://www.nuget.org/packages/ValvePak/" title="NuGet"><img alt="NuGet" src="https://img.shields.io/nuget/v/ValvePak.svg?logo=nuget&label=NuGet&logoColor=ffffff&color=004880&style=for-the-badge"></a>
-    <a href="https://app.codecov.io/gh/ValveResourceFormat/ValvePak" title="Code Coverage"><img alt="Code Coverage" src="https://img.shields.io/codecov/c/github/ValveResourceFormat/ValvePak/master?logo=codecov&label=Coverage&logoColor=ffffff&color=F01F7A&style=for-the-badge"></a>
+  Read, extract, verify, and create VPK files, the archive format that packages game content in Source and Source 2 games.
+  <br />
+  <a href="https://www.nuget.org/packages/ValvePak/">NuGet</a>
+  ·
+  <a href="#usage">Usage</a>
+  ·
+  <a href="#create-a-vpk">Creating a VPK</a>
+  ·
+  <a href="https://app.codecov.io/gh/ValveResourceFormat/ValvePak">Coverage</a>
 </p>
-
-A .NET library for reading and extracting VPK (Valve Pak) files, the uncompressed archive format used to package game content in Source and Source 2 engine games.
 
 ## Usage
 
 ```csharp
+using ValvePak;
+
 using var package = new Package();
 
 // Open a vpk file
