@@ -146,7 +146,15 @@ namespace ValvePak
 				Entries[extension] = typeEntries;
 			}
 
-			typeEntries.Add(entry);
+			if (Comparer == null)
+			{
+				typeEntries.Add(entry);
+			}
+			else
+			{
+				var index = typeEntries.BinarySearch(entry, Comparer);
+				typeEntries.Insert(index < 0 ? ~index : index, entry);
+			}
 
 			return entry;
 		}
