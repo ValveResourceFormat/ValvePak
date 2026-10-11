@@ -52,6 +52,11 @@ namespace ValvePak
 		}
 
 		/// <summary>
+		/// Size in bytes of the buffer that chunk hash fractions are read into, which covers a whole fraction as created by Valve.
+		/// </summary>
+		private const uint ChunkHashBufferSize = 1024 * 1024;
+
+		/// <summary>
 		/// Gets the size in bytes of the whole file before <see cref="WholeFileChecksum"/>.
 		/// </summary>
 		private uint FileSizeBeforeWholeFileHash;
@@ -112,87 +117,90 @@ namespace ValvePak
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyChunkHashes(IProgress<string>? progressReporter = null)
 		{
-			Stream? stream = null;
-			var lastArchiveIndex = ushort.MaxValue;
-
 			// When created by Valve, entries are sorted, and are 1MB chunks
 			var allEntries = AccessPackFileHashes
-				.OrderBy(file => file.Offset)
-				.GroupBy(file => file.ArchiveIndex)
-				.OrderBy(x => x.Key)
-				.SelectMany(x => x);
+				.OrderBy(file => file.ArchiveIndex)
+				.ThenBy(file => file.Offset)
+				.ToList();
 
+			var maxLength = allEntries.Count > 0 ? allEntries.Max(file => file.Length) : 0;
+			var buffer = new byte[Math.Min(maxLength, ChunkHashBufferSize)];
 			Span<byte> hash = stackalloc byte[16];
 
-			try
+			using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+
+			foreach (var entry in allEntries)
 			{
-				foreach (var entry in allEntries)
+				var hashTypeName = entry.HashType switch
 				{
-					var hashTypeName = entry.HashType switch
-					{
-						EHashType.Blake3 => "Blake3",
-						EHashType.MD5 => "MD5",
-						_ => string.Empty,
-					};
+					EHashType.Blake3 => "Blake3",
+					EHashType.MD5 => "MD5",
+					_ => string.Empty,
+				};
 
-					progressReporter?.Report($"Verifying {hashTypeName} hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
+				progressReporter?.Report($"Verifying {hashTypeName} hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
 
-					if (stream == null || lastArchiveIndex != entry.ArchiveIndex)
-					{
-						if (lastArchiveIndex != 0x7FFF)
+				GetArchive(entry.ArchiveIndex);
+
+				long position = 0;
+				ReadOnlySpan<byte> data;
+
+				switch (entry.HashType)
+				{
+					case EHashType.Blake3:
+						using (var hasher = Blake3.Hasher.New())
 						{
-							stream?.Close();
+							while (ReadChunkHashFraction(entry, buffer, ref position, out data))
+							{
+								hasher.Update(data);
+							}
+
+							hasher.Finalize(hash);
+						}
+						break;
+
+					case EHashType.MD5:
+						while (ReadChunkHashFraction(entry, buffer, ref position, out data))
+						{
+							md5.AppendData(data);
 						}
 
-						stream = GetFileStream(entry.ArchiveIndex);
-						lastArchiveIndex = entry.ArchiveIndex;
-					}
-					else
-					{
-						var offset = entry.ArchiveIndex == 0x7FFF ? HeaderSize + TreeSize : 0;
-						stream.Seek(offset, SeekOrigin.Begin);
-					}
+						md5.GetHashAndReset(hash);
+						break;
 
-					using var subStream = new SubStream(stream, stream.Position + entry.Offset, entry.Length);
-
-					switch (entry.HashType)
-					{
-						case EHashType.Blake3:
-							using (var hasher = Blake3.Hasher.New())
-							{
-								var buffer = new byte[8192]; // TODO: Fix this alloc
-								int bytesRead;
-								while ((bytesRead = subStream.Read(buffer, 0, buffer.Length)) > 0)
-								{
-									hasher.UpdateWithJoin(buffer.AsSpan(0, bytesRead));
-								}
-								hasher.Finalize(hash);
-							}
-							break;
-
-						case EHashType.MD5:
-							MD5.HashData(subStream, hash);
-							break;
-
-						default:
-							throw new InvalidDataException($"Unrecognized hash type: {entry.HashType} ({(ushort)entry.HashType})");
-					}
-
-					if (!hash.SequenceEqual(entry.Checksum))
-					{
-						throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
-					}
+					default:
+						throw new InvalidDataException($"Unrecognized hash type: {entry.HashType} ({(ushort)entry.HashType})");
 				}
 
-				progressReporter?.Report("Successfully verified archive hashes.");
-			}
-			finally
-			{
-				if (lastArchiveIndex != 0x7FFF)
+				if (!hash.SequenceEqual(entry.Checksum))
 				{
-					stream?.Close();
+					throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
 				}
 			}
+
+			progressReporter?.Report("Successfully verified archive hashes.");
+		}
+
+		/// <summary>
+		/// Reads the next part of the data covered by a chunk hash fraction into the buffer.
+		/// </summary>
+		/// <returns>False once all data was read, or the end of the archive was reached.</returns>
+		private bool ReadChunkHashFraction(ChunkHashFraction fraction, byte[] buffer, scoped ref long position, out ReadOnlySpan<byte> data)
+		{
+			var length = (int)Math.Min(fraction.Length - position, buffer.Length);
+
+			if (length <= 0)
+			{
+				data = default;
+				return false;
+			}
+
+			var bytesRead = ReadArchiveData(fraction.ArchiveIndex, fraction.Offset + position, buffer.AsSpan(0, length));
+
+			data = buffer.AsSpan(0, bytesRead);
+			position = bytesRead < length ? fraction.Length : position + bytesRead;
+
+			return bytesRead > 0;
 		}
 
 		/// <summary>
@@ -208,16 +216,21 @@ namespace ValvePak
 
 			var allEntries = Entries
 				.SelectMany(file => file.Value)
-				.OrderBy(file => file.Offset)
-				.GroupBy(file => file.ArchiveIndex)
-				.OrderBy(x => x.Key)
-				.SelectMany(x => x);
+				.OrderBy(file => file.ArchiveIndex)
+				.ThenBy(file => file.Offset);
+
+			var buffer = Array.Empty<byte>();
 
 			foreach (var entry in allEntries)
 			{
 				progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
 
-				ReadEntry(entry, out var _, validateCrc: true);
+				if (buffer.Length < entry.TotalLength)
+				{
+					buffer = new byte[entry.TotalLength];
+				}
+
+				ReadEntry(entry, buffer, validateCrc: true);
 			}
 
 			progressReporter?.Report("Successfully verified file CRC32 checksums.");

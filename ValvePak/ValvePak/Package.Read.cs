@@ -500,27 +500,6 @@ namespace ValvePak
 			Signature = Reader.ReadBytes(signatureSize);
 		}
 
-		private Stream GetFileStream(ushort archiveIndex)
-		{
-			Stream stream;
-
-			if (archiveIndex != 0x7FFF)
-			{
-				var fileName = GetArchiveIndexFullFilePath(FileName, archiveIndex);
-
-				stream = new FileStream(fileName, FileMode.Open, FileAccess.Read);
-			}
-			else
-			{
-				Debug.Assert(Reader != null);
-
-				stream = Reader.BaseStream;
-				stream.Seek(HeaderSize + TreeSize, SeekOrigin.Begin);
-			}
-
-			return stream;
-		}
-
 		/// <summary>
 		/// Returns the archive for the given index, opening its file on first use.
 		/// The embedded archive (0x7FFF) shares the handle of the <see cref="FileStream"/> the package was read from,
