@@ -31,6 +31,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Reads the given <see cref="Stream"/>.
+		/// If this package was read before, everything read from the previous package is replaced.
 		/// </summary>
 		/// <param name="input">The input <see cref="Stream"/> to read from.</param>
 		public void Read(Stream input)
@@ -41,6 +42,8 @@ namespace ValvePak
 			{
 				throw new InvalidOperationException("If you call Read() directly with a stream, you must call SetFileName() first.");
 			}
+
+			ResetReadState(input);
 
 			Reader = new BinaryReader(input);
 

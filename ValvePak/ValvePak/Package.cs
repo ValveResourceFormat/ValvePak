@@ -147,15 +147,7 @@ namespace ValvePak
 		{
 			if (disposing)
 			{
-				lock (ArchivesLock)
-				{
-					foreach (var archive in Archives.Values)
-					{
-						archive.Dispose();
-					}
-
-					Archives.Clear();
-				}
+				ReleaseArchives();
 
 				if (Reader != null)
 				{
@@ -163,6 +155,63 @@ namespace ValvePak
 					Reader = null;
 				}
 			}
+		}
+
+		/// <summary>
+		/// Closes all archive files. Streams returned by <see cref="GetMemoryMappedStreamIfPossible"/> stay readable.
+		/// </summary>
+		private void ReleaseArchives()
+		{
+			lock (ArchivesLock)
+			{
+				foreach (var archive in Archives.Values)
+				{
+					archive.Dispose();
+				}
+
+				Archives.Clear();
+			}
+		}
+
+		/// <summary>
+		/// Releases the previous reader and archive files and clears everything that was read,
+		/// so that reading a package again behaves the same as reading it with a new instance.
+		/// </summary>
+		/// <param name="input">The stream that is about to be read, which is not disposed even if the previous reader uses it.</param>
+		private void ResetReadState(Stream input)
+		{
+			ReleaseArchives();
+
+			if (Reader != null)
+			{
+				if (Reader.BaseStream != input)
+				{
+					Reader.Dispose();
+				}
+
+				Reader = null;
+			}
+
+			Version = 2;
+			HeaderSize = 0;
+			TreeSize = 0;
+			FileDataSectionSize = 0;
+			ArchiveMD5SectionSize = 0;
+			OtherMD5SectionSize = 0;
+			SignatureSectionSize = 0;
+			TreeChecksum = null;
+			ArchiveMD5EntriesChecksum = null;
+			WholeFileChecksum = null;
+			PublicKey = null;
+			Signature = null;
+			SignatureType = ESignatureType.Unknown;
+			Entries = null;
+			AccessPackFileHashes = [];
+			FileSizeBeforeArchiveMD5Entries = 0;
+			FileSizeBeforeWholeFileHash = 0;
+			FileSizeBeforeSignature = 0;
+			CurrentChunkFileIndex = 0;
+			CurrentChunkFileSize = 0;
 		}
 
 		private Dictionary<string, List<PackageEntry>> CreateEntriesDictionary()
@@ -173,19 +222,17 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Sets the file name.
+		/// Sets the file name. Archive files opened for the previous file name are closed.
 		/// </summary>
 		/// <param name="fileName">Filename.</param>
 		public void SetFileName(string fileName)
 		{
 			ArgumentNullException.ThrowIfNull(fileName);
 
-			FileName = StripDirVpkSuffixes(fileName, out var isDirVpk);
+			ReleaseArchives();
 
-			if (isDirVpk)
-			{
-				IsDirVPK = true;
-			}
+			FileName = StripDirVpkSuffixes(fileName, out var isDirVpk);
+			IsDirVPK = isDirVpk;
 		}
 
 		/// <summary>
