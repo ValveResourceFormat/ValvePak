@@ -650,9 +650,9 @@ namespace ValvePak
 		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
 		///
 		/// Each archive is mapped once and stays mapped until the package is disposed.
-		/// Returned streams remain readable after the package is disposed, until they are disposed themselves.
-		/// This method is safe to call from multiple threads, but the returned stream is not thread-safe:
-		/// it must not be disposed while another thread is reading from it.
+		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>
+		/// once the package is disposed or read again.
+		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
@@ -672,7 +672,7 @@ namespace ValvePak
 				{
 					if (entry.Length > 4096)
 					{
-						return new MappedEntryStream(view.SafeMemoryMappedViewHandle, view.PointerOffset + offset, entry.Length);
+						return new UnmanagedMemoryStream(view.SafeMemoryMappedViewHandle, view.PointerOffset + offset, entry.Length);
 					}
 
 					var data = new byte[entry.Length];

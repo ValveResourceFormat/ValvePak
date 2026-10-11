@@ -170,7 +170,7 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Closes all archive files. Streams returned by <see cref="GetMemoryMappedStreamIfPossible"/> stay readable.
+		/// Closes all archive files.
 		/// </summary>
 		private void ReleaseArchives()
 		{

@@ -93,7 +93,6 @@ namespace ValvePak
 
 		/// <summary>
 		/// Releases the view and the mapping, and closes the handle if it is owned.
-		/// Streams created over the view keep it mapped until they are disposed.
 		/// </summary>
 		public void Dispose()
 		{
