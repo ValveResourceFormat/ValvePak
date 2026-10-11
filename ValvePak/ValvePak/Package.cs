@@ -1,7 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.MemoryMappedFiles;
+using System.Threading;
 
 namespace ValvePak
 {
@@ -26,7 +27,8 @@ namespace ValvePak
 		private const char WindowsDirectorySeparator = '\\';
 
 		private BinaryReader? Reader;
-		private readonly Dictionary<int, MemoryMappedFile> MemoryMappedPaks = [];
+		private readonly ConcurrentDictionary<ushort, ArchiveFile> Archives = new();
+		private readonly Lock ArchivesLock = new();
 
 		/// <summary>
 		/// Gets the file name.
@@ -145,19 +147,29 @@ namespace ValvePak
 		{
 			if (disposing)
 			{
+				lock (ArchivesLock)
+				{
+					foreach (var archive in Archives.Values)
+					{
+						archive.Dispose();
+					}
+
+					Archives.Clear();
+				}
+
 				if (Reader != null)
 				{
 					Reader.Dispose();
 					Reader = null;
 				}
-
-				foreach (var stream in MemoryMappedPaks.Values)
-				{
-					stream.Dispose();
-				}
-
-				MemoryMappedPaks.Clear();
 			}
+		}
+
+		private Dictionary<string, List<PackageEntry>> CreateEntriesDictionary()
+		{
+			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
+
+			return new Dictionary<string, List<PackageEntry>>(stringComparer);
 		}
 
 		/// <summary>

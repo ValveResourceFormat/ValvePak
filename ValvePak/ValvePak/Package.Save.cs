@@ -138,11 +138,7 @@ namespace ValvePak
 				ArchiveIndex = archiveIndex,
 			};
 
-			if (Entries == null)
-			{
-				var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
-				Entries = new Dictionary<string, List<PackageEntry>>(stringComparer);
-			}
+			Entries ??= CreateEntriesDictionary();
 
 			if (!Entries.TryGetValue(extension, out var typeEntries))
 			{

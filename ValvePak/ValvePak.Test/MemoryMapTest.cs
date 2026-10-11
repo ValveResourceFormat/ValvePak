@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.IO.MemoryMappedFiles;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 
@@ -20,7 +19,7 @@ namespace ValvePak.Test
 			package.Read(path);
 
 			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
-			await Assert.That(stream).IsAssignableTo<MemoryMappedViewStream>();
+			await Assert.That(stream).IsNotAssignableTo<MemoryStream>();
 			await VerifyKitten(stream);
 
 			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
@@ -37,7 +36,7 @@ namespace ValvePak.Test
 			package.Read(path);
 
 			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
-			await Assert.That(stream).IsAssignableTo<MemoryMappedViewStream>();
+			await Assert.That(stream).IsNotAssignableTo<MemoryStream>();
 			await VerifyKitten(stream);
 
 			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
@@ -56,7 +55,7 @@ namespace ValvePak.Test
 			package.Read(fileStream);
 
 			using var stream = package.GetMemoryMappedStreamIfPossible(package.FindEntry("kitten.jpg")!);
-			await Assert.That(stream).IsAssignableTo<MemoryMappedViewStream>();
+			await Assert.That(stream).IsNotAssignableTo<MemoryStream>();
 			await VerifyKitten(stream);
 
 			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
