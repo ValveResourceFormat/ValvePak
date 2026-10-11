@@ -329,7 +329,7 @@ namespace ValvePak
 
 			writer.Write(NullByte);
 
-			var fileTreeSize = stream.Position - headerSize;
+			var fileTreeSize = stream.Position - streamOffset - headerSize;
 			var chunkHashFractions = new List<ChunkHashFraction>();
 
 			// File data, one archive at a time so only a single chunk file is open and written sequentially
@@ -358,11 +358,13 @@ namespace ValvePak
 			}
 
 			var afterFileData = stream.Position;
-			var fileDataSize = afterFileData - fileTreeSize - headerSize;
+			var fileDataSize = afterFileData - streamOffset - headerSize - fileTreeSize;
 
 			// Archive MD5 section, contains hashes of chunk files
 			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions);
 			writer.Write(archiveMd5SectionBytes);
+
+			var hashedLength = stream.Position - streamOffset;
 
 			// Set tree size
 			// TODO: It is possible to precalculate these sizes to remove seeking
@@ -373,6 +375,7 @@ namespace ValvePak
 			{
 				// Version 1 has no checksums
 				stream.Seek(afterFileData, SeekOrigin.Begin);
+				TruncateAfterPackage(stream);
 				return;
 			}
 
@@ -390,33 +393,26 @@ namespace ValvePak
 				using var fileTreeMD5 = MD5.Create();
 				using var fullFileMD5 = MD5.Create();
 
-				stream.ReadExactly(buffer, 0, headerSize);
-				fullFileMD5.TransformBlock(buffer, 0, headerSize, null, 0);
+				var treeEnd = headerSize + fileTreeSize;
 
-				int bytesRead;
-				var fileTreeRead = 0;
-
-				// Calculate file tree size hash
-				while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
+				for (long position = 0; position < hashedLength;)
 				{
-					fullFileMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
+					var count = (int)Math.Min(buffer.Length, hashedLength - position);
+					stream.ReadExactly(buffer, 0, count);
+					fullFileMD5.TransformBlock(buffer, 0, count, null, 0);
 
-					fileTreeRead += bytesRead;
+					var treeFrom = Math.Max(position, headerSize);
+					var treeTo = Math.Min(position + count, treeEnd);
 
-					if (fileTreeRead >= fileTreeSize)
+					if (treeFrom < treeTo)
 					{
-						fileTreeMD5.TransformFinalBlock(buffer, 0, (int)(fileTreeSize - (fileTreeRead - bytesRead)));
-						break;
+						fileTreeMD5.TransformBlock(buffer, (int)(treeFrom - position), (int)(treeTo - treeFrom), null, 0);
 					}
 
-					fileTreeMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
+					position += count;
 				}
 
-				// Calculate remaining file data hash
-				while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
-				{
-					fullFileMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
-				}
+				fileTreeMD5.TransformFinalBlock(buffer, 0, 0);
 
 				// File tree hash
 				var treeHash = fileTreeMD5.Hash;
@@ -439,6 +435,27 @@ namespace ValvePak
 			finally
 			{
 				ArrayPool<byte>.Shared.Return(buffer);
+			}
+
+			TruncateAfterPackage(stream);
+		}
+
+		/// <summary>
+		/// Removes data left in the stream after the written package, if the stream can be resized.
+		/// </summary>
+		private static void TruncateAfterPackage(Stream stream)
+		{
+			if (stream.Length <= stream.Position)
+			{
+				return;
+			}
+
+			try
+			{
+				stream.SetLength(stream.Position);
+			}
+			catch (NotSupportedException)
+			{
 			}
 		}
 

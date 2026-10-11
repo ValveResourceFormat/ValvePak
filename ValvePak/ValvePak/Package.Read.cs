@@ -51,6 +51,7 @@ namespace ValvePak
 
 			ResetReadState(input);
 
+			StreamOffset = input.Position;
 			Reader = new BinaryReader(input);
 
 			if (Reader.ReadUInt32() != MAGIC)
@@ -83,7 +84,7 @@ namespace ValvePak
 
 			Version = version;
 
-			HeaderSize = (uint)input.Position;
+			HeaderSize = (uint)(input.Position - StreamOffset);
 
 			ReadEntries();
 
@@ -388,14 +389,14 @@ namespace ValvePak
 			Entries = typeEntries;
 
 			// Set to real size that was read for hash verification, in case it was tampered with
-			TreeSize = (uint)Reader.BaseStream.Position - HeaderSize;
+			TreeSize = (uint)(Reader.BaseStream.Position - StreamOffset - HeaderSize);
 		}
 
 		private void ReadArchiveMD5Section()
 		{
 			Debug.Assert(Reader != null);
 
-			FileSizeBeforeArchiveMD5Entries = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeArchiveMD5Entries = (uint)(Reader.BaseStream.Position - StreamOffset);
 
 			if (ArchiveMD5SectionSize == 0)
 			{
@@ -472,7 +473,7 @@ namespace ValvePak
 
 			TreeChecksum = Reader.ReadBytes(16);
 			ArchiveMD5EntriesChecksum = Reader.ReadBytes(16);
-			FileSizeBeforeWholeFileHash = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeWholeFileHash = (uint)(Reader.BaseStream.Position - StreamOffset);
 			WholeFileChecksum = Reader.ReadBytes(16);
 		}
 
@@ -480,7 +481,7 @@ namespace ValvePak
 		{
 			Debug.Assert(Reader != null);
 
-			FileSizeBeforeSignature = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeSignature = (uint)(Reader.BaseStream.Position - StreamOffset);
 
 			if (SignatureSectionSize == 0)
 			{
@@ -569,12 +570,13 @@ namespace ValvePak
 
 		/// <summary>
 		/// Returns the offset in the archive file of data at the given offset in the archive data section.
+		/// The package itself may start at a non-zero position of the stream it was read from.
 		/// </summary>
 		private long GetArchiveDataOffset(ushort archiveIndex, long offset)
 		{
 			if (archiveIndex == 0x7FFF)
 			{
-				return offset + HeaderSize + TreeSize;
+				return StreamOffset + offset + HeaderSize + TreeSize;
 			}
 
 			return offset;

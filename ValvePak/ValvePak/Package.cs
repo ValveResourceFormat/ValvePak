@@ -27,6 +27,12 @@ namespace ValvePak
 		private const char WindowsDirectorySeparator = '\\';
 
 		private BinaryReader? Reader;
+
+		/// <summary>
+		/// Position in the read stream where the package starts.
+		/// </summary>
+		private long StreamOffset;
+
 		private readonly ConcurrentDictionary<ushort, ArchiveFile> Archives = new();
 		private readonly Lock ArchivesLock = new();
 
@@ -199,6 +205,7 @@ namespace ValvePak
 			}
 
 			Version = 2;
+			StreamOffset = 0;
 			HeaderSize = 0;
 			TreeSize = 0;
 			FileDataSectionSize = 0;

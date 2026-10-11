@@ -112,13 +112,14 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Computes the MD5 hash of a range of the package stream while holding the reader lock that <see cref="ReadArchiveData"/> also takes.
+		/// Computes the MD5 hash of a range of the package, at an offset from the start of the package,
+		/// while holding the reader lock that <see cref="ReadArchiveData"/> also takes.
 		/// </summary>
-		private static byte[] HashPackageRange(BinaryReader reader, long offset, long length)
+		private byte[] HashPackageRange(BinaryReader reader, long offset, long length)
 		{
 			lock (reader)
 			{
-				using var subStream = new SubStream(reader.BaseStream, offset, length);
+				using var subStream = new SubStream(reader.BaseStream, StreamOffset + offset, length);
 
 				return MD5.HashData(subStream);
 			}
@@ -299,7 +300,7 @@ namespace ValvePak
 
 			lock (reader)
 			{
-				using var subStream = new SubStream(reader.BaseStream, 0, FileSizeBeforeSignature);
+				using var subStream = new SubStream(reader.BaseStream, StreamOffset, FileSizeBeforeSignature);
 
 				return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 			}
