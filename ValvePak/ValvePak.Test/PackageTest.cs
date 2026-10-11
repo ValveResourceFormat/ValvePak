@@ -374,6 +374,63 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		public async Task ThrowsWhenEntryExtendsPastEndOfArchive()
+		{
+			var directory = Path.Combine(Path.GetTempPath(), "ValvePakTest_" + Path.GetRandomFileName());
+			Directory.CreateDirectory(directory);
+
+			try
+			{
+				// Cut off the last entry (steammessages_clientserver.proto, 39177 bytes) and the end of the one before it (steammessages_base.proto, 2563 bytes)
+				const int Cut = 39177 + 100;
+
+				File.Copy(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"), Path.Combine(directory, "test_dir.vpk"));
+				var chunk = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Files", "test_000.vpk"));
+				await File.WriteAllBytesAsync(Path.Combine(directory, "test_000.vpk"), chunk[..^Cut]);
+
+				var single = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Files", "test_single.vpk"));
+				await File.WriteAllBytesAsync(Path.Combine(directory, "test_single.vpk"), single[..^Cut]);
+
+				foreach (var (name, fromMemory) in new[] { ("test_dir.vpk", false), ("test_single.vpk", false), ("test_single.vpk", true) })
+				{
+					var path = Path.Combine(directory, name);
+
+					using var package = new Package();
+
+					if (fromMemory)
+					{
+						package.SetFileName(path);
+						package.Read(new MemoryStream(await File.ReadAllBytesAsync(path)));
+					}
+					else
+					{
+						package.Read(path);
+					}
+
+					var kitten = package.FindEntry("kitten.jpg")!;
+					await Assert.That(() => package.ReadEntry(kitten, out _, validateCrc: true)).ThrowsNothing();
+
+					foreach (var truncatedName in new[] { "steammessages_base.proto", "steammessages_clientserver.proto" })
+					{
+						var truncated = package.FindEntry(truncatedName)!;
+
+						using (Assert.Multiple())
+						{
+							await Assert.That(() => package.ReadEntry(truncated, out _, validateCrc: false)).ThrowsExactly<EndOfStreamException>();
+							await Assert.That(() => package.ReadEntry(truncated, out _, validateCrc: true)).ThrowsExactly<EndOfStreamException>();
+							await Assert.That(() => package.ReadEntry(truncated, new byte[truncated.TotalLength], validateCrc: false)).ThrowsExactly<EndOfStreamException>();
+							await Assert.That(() => package.GetMemoryMappedStreamIfPossible(truncated)).ThrowsExactly<EndOfStreamException>();
+						}
+					}
+				}
+			}
+			finally
+			{
+				Directory.Delete(directory, recursive: true);
+			}
+		}
+
+		[Test]
 		public async Task TestFileChecksums()
 		{
 			var path = Path.Combine(AppContext.BaseDirectory, "Files", "broken_dir.vpk");

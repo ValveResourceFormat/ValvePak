@@ -96,6 +96,7 @@ namespace ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer.</param>
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -112,6 +113,7 @@ namespace ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer, size of the buffer must be at least <see cref="PackageEntry.TotalLength"/>.</param>
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public void ReadEntry(PackageEntry entry, byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -131,7 +133,13 @@ namespace ValvePak
 
 			if (entry.Length > 0)
 			{
-				ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, (int)entry.Length));
+				var length = (int)entry.Length;
+				var bytesRead = ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, length));
+
+				if (bytesRead != length)
+				{
+					throw new EndOfStreamException($"Reached the end of archive {entry.ArchiveIndex} after reading {bytesRead} of {length} bytes for '{entry.GetFullPath()}'.");
+				}
 			}
 
 			if (!validateCrc)
@@ -345,13 +353,7 @@ namespace ValvePak
 						if (smallDataSize > 0)
 						{
 							entry.SmallData = new byte[smallDataSize];
-
-							int bytesRead;
-							int totalRead = 0;
-							while ((bytesRead = Reader.Read(entry.SmallData, totalRead, entry.SmallData.Length - totalRead)) != 0)
-							{
-								totalRead += bytesRead;
-							}
+							Reader.BaseStream.ReadExactly(entry.SmallData);
 						}
 
 						entries.Add(entry);
@@ -564,11 +566,11 @@ namespace ValvePak
 		/// <summary>
 		/// Returns the offset in the archive file of data at the given offset in the archive data section.
 		/// </summary>
-		private long GetArchiveDataOffset(ushort archiveIndex, uint offset)
+		private long GetArchiveDataOffset(ushort archiveIndex, long offset)
 		{
 			if (archiveIndex == 0x7FFF)
 			{
-				return (long)offset + HeaderSize + TreeSize;
+				return offset + HeaderSize + TreeSize;
 			}
 
 			return offset;
@@ -579,7 +581,7 @@ namespace ValvePak
 		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <returns>The number of bytes read.</returns>
-		private int ReadArchiveData(ushort archiveIndex, uint offset, Span<byte> output)
+		private int ReadArchiveData(ushort archiveIndex, long offset, Span<byte> output)
 		{
 			var fileOffset = GetArchiveDataOffset(archiveIndex, offset);
 			var archive = GetArchive(archiveIndex);
@@ -628,6 +630,7 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -651,17 +654,9 @@ namespace ValvePak
 					return new MemoryStream(data);
 				}
 
-				if (entry.Length > 4096)
+				if (isInRange && entry.Length > 4096)
 				{
-					if (isInRange)
-					{
-						return mapping!.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);
-					}
-
-					// The entry extends past the end of the archive, so it is truncated or was modified after the package was read
-					ReadEntry(entry, out var validatedOutput, validateCrc: true);
-
-					return new MemoryStream(validatedOutput);
+					return mapping!.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);
 				}
 			}
 
