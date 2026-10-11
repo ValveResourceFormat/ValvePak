@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -74,20 +73,23 @@ namespace ValvePak
 		/// <summary>
 		/// Verify MD5 hashes provided in the VPK.
 		/// </summary>
+		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
+		/// <exception cref="InvalidDataException">The package has no checksums, or a checksum does not match.</exception>
 		public void VerifyHashes()
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var reader = Reader ?? throw new InvalidOperationException("The package has not been read.");
 
 			if (Version != 2)
 			{
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
-			var reader = Reader;
-			Debug.Assert(reader != null);
-			Debug.Assert(TreeChecksum != null);
-			Debug.Assert(ArchiveMD5EntriesChecksum != null);
-			Debug.Assert(WholeFileChecksum != null);
+			if (TreeChecksum == null || ArchiveMD5EntriesChecksum == null || WholeFileChecksum == null)
+			{
+				throw new InvalidDataException("The package has no checksum section.");
+			}
 
 			var hash = HashPackageRange(reader, HeaderSize, TreeSize);
 
