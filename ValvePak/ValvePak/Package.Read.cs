@@ -34,6 +34,9 @@ namespace ValvePak
 		/// <summary>
 		/// Reads the given <see cref="Stream"/>.
 		/// If this package was read before, everything read from the previous package is replaced.
+		///
+		/// The stream must stay open while the package is used, entry data is read from it on demand.
+		/// It is disposed together with the package.
 		/// </summary>
 		/// <param name="input">The input <see cref="Stream"/> to read from.</param>
 		public void Read(Stream input)
@@ -163,6 +166,11 @@ namespace ValvePak
 			}
 		}
 
+		/// <summary>
+		/// Largest directory tree in bytes that is read into a single buffer, larger trees are parsed from the stream.
+		/// </summary>
+		private const uint MaxTreeBufferSize = 64 * 1024 * 1024;
+
 		private void ReadEntries()
 		{
 			Debug.Assert(Reader != null);
@@ -170,7 +178,7 @@ namespace ValvePak
 			var input = Reader.BaseStream;
 			var treeStart = input.Position;
 
-			if (TreeSize > 0 && TreeSize <= Array.MaxLength && input.CanSeek && TreeSize <= input.Length - treeStart)
+			if (TreeSize > 0 && TreeSize <= MaxTreeBufferSize && input.CanSeek && TreeSize <= input.Length - treeStart)
 			{
 				var tree = GC.AllocateUninitializedArray<byte>((int)TreeSize);
 				var treeLength = input.ReadAtLeast(tree, tree.Length, throwOnEndOfStream: false);
@@ -520,6 +528,13 @@ namespace ValvePak
 				return archive;
 			}
 
+			if (archiveIndex == 0x7FFF && Reader?.BaseStream is not FileStream)
+			{
+				ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+				return null;
+			}
+
 			lock (ArchivesLock)
 			{
 				ObjectDisposedException.ThrowIf(IsDisposed, this);
@@ -615,7 +630,8 @@ namespace ValvePak
 		///
 		/// Each archive is mapped once and stays mapped until the package is disposed.
 		/// Returned streams remain readable after the package is disposed, until they are disposed themselves.
-		/// This method is safe to call from multiple threads.
+		/// This method is safe to call from multiple threads, but the returned stream is not thread-safe:
+		/// it must not be disposed while another thread is reading from it.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>

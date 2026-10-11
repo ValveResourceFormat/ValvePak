@@ -83,33 +83,44 @@ namespace ValvePak
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
-			Debug.Assert(Reader != null);
+			var reader = Reader;
+			Debug.Assert(reader != null);
 			Debug.Assert(TreeChecksum != null);
 			Debug.Assert(ArchiveMD5EntriesChecksum != null);
 			Debug.Assert(WholeFileChecksum != null);
 
-			using var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
-			var hash = MD5.HashData(subStream);
+			var hash = HashPackageRange(reader, HeaderSize, TreeSize);
 
 			if (!hash.SequenceEqual(TreeChecksum))
 			{
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
 
-			using var subStream2 = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
-			hash = MD5.HashData(subStream2);
+			hash = HashPackageRange(reader, FileSizeBeforeArchiveMD5Entries, ArchiveMD5SectionSize);
 
 			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
 			{
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}
 
-			using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
-			hash = MD5.HashData(subStream3);
+			hash = HashPackageRange(reader, 0, FileSizeBeforeWholeFileHash);
 
 			if (!hash.SequenceEqual(WholeFileChecksum))
 			{
 				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
+			}
+		}
+
+		/// <summary>
+		/// Computes the MD5 hash of a range of the package stream while holding the reader lock that <see cref="ReadArchiveData"/> also takes.
+		/// </summary>
+		private static byte[] HashPackageRange(BinaryReader reader, long offset, long length)
+		{
+			lock (reader)
+			{
+				using var subStream = new SubStream(reader.BaseStream, offset, length);
+
+				return MD5.HashData(subStream);
 			}
 		}
 
@@ -253,7 +264,9 @@ namespace ValvePak
 				return true;
 			}
 
-			if (Reader == null)
+			var reader = Reader;
+
+			if (reader == null)
 			{
 				return false;
 			}
@@ -268,8 +281,7 @@ namespace ValvePak
 					return false;
 				}
 
-				using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
-				var hash = MD5.HashData(subStream3);
+				var hash = HashPackageRange(reader, 0, FileSizeBeforeWholeFileHash);
 
 				if (!hash.SequenceEqual(WholeFileChecksum))
 				{
@@ -285,9 +297,12 @@ namespace ValvePak
 				return false;
 			}
 
-			using var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeSignature);
+			lock (reader)
+			{
+				using var subStream = new SubStream(reader.BaseStream, 0, FileSizeBeforeSignature);
 
-			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+				return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+			}
 		}
 	}
 }
