@@ -130,6 +130,7 @@ namespace ValvePak
 		public List<ChunkHashFraction> AccessPackFileHashes { get; private set; } = [];
 
 		private CaseInsensitivePackageEntryComparer? Comparer;
+		private bool IsDisposed;
 
 		/// <summary>
 		/// Releases binary reader.
@@ -147,6 +148,11 @@ namespace ValvePak
 		{
 			if (disposing)
 			{
+				lock (ArchivesLock)
+				{
+					IsDisposed = true;
+				}
+
 				ReleaseArchives();
 
 				if (Reader != null)

@@ -76,6 +76,8 @@ namespace ValvePak
 		/// </summary>
 		public void VerifyHashes()
 		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 			if (Version != 2)
 			{
 				throw new InvalidDataException("Only version 2 is supported.");
@@ -117,6 +119,8 @@ namespace ValvePak
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyChunkHashes(IProgress<string>? progressReporter = null)
 		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 			// When created by Valve, entries are sorted, and are 1MB chunks
 			var allEntries = AccessPackFileHashes
 				.OrderBy(file => file.ArchiveIndex)
@@ -209,6 +213,8 @@ namespace ValvePak
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
 		public void VerifyFileChecksums(IProgress<string>? progressReporter = null)
 		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 			if (Entries == null)
 			{
 				return;

@@ -22,6 +22,8 @@ namespace ValvePak
 		/// <param name="filename">The file to open and read.</param>
 		public void Read(string filename)
 		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 			SetFileName(filename);
 
 			var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -37,6 +39,7 @@ namespace ValvePak
 		public void Read(Stream input)
 		{
 			ArgumentNullException.ThrowIfNull(input);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			if (FileName == null)
 			{
@@ -103,6 +106,7 @@ namespace ValvePak
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			output = new byte[entry.TotalLength];
 
@@ -121,6 +125,7 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(entry);
 			ArgumentNullException.ThrowIfNull(output);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var totalLength = (int)entry.TotalLength;
 
@@ -517,6 +522,8 @@ namespace ValvePak
 
 			lock (ArchivesLock)
 			{
+				ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 				if (Archives.TryGetValue(archiveIndex, out archive))
 				{
 					return archive;
@@ -616,6 +623,7 @@ namespace ValvePak
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			if (entry.Length > 0 && entry.SmallData.Length == 0 && GetArchive(entry.ArchiveIndex) is { } archive)
 			{
