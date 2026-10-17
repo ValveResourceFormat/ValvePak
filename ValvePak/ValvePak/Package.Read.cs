@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -168,19 +170,48 @@ namespace ValvePak
 			}
 		}
 
+		/// <summary>
+		/// Reads exactly <see cref="TreeSize"/> bytes of the directory tree and parses the entries from them.
+		/// </summary>
 		private void ReadEntries()
 		{
 			Debug.Assert(Reader != null);
 
+			var input = Reader.BaseStream;
+
+			if (TreeSize > input.Length - input.Position)
+			{
+				throw new InvalidDataException($"Directory tree size ({TreeSize}) is larger than the rest of the file ({input.Length - input.Position}).");
+			}
+
+			var treeSize = (int)TreeSize;
+			var tree = ArrayPool<byte>.Shared.Rent(treeSize);
+
+			try
+			{
+				input.ReadExactly(tree, 0, treeSize);
+
+				Entries = ParseEntries(tree.AsSpan(0, treeSize));
+			}
+			finally
+			{
+				ArrayPool<byte>.Shared.Return(tree);
+			}
+		}
+
+		private Dictionary<string, List<PackageEntry>> ParseEntries(ReadOnlySpan<byte> tree)
+		{
+			const int EntryMetadataSize = 18;
+
 			var typeEntries = CreateEntriesDictionary();
-			using var ms = new MemoryStream();
+			var position = 0;
 
 			// Types
 			while (true)
 			{
-				var typeName = ReadNullTermUtf8String(Reader, ms);
+				var typeName = ReadNullTermUtf8String(tree, ref position);
 
-				if (string.IsNullOrEmpty(typeName))
+				if (typeName.Length == 0)
 				{
 					break;
 				}
@@ -190,9 +221,9 @@ namespace ValvePak
 				// Directories
 				while (true)
 				{
-					var directoryName = ReadNullTermUtf8String(Reader, ms);
+					var directoryName = ReadNullTermUtf8String(tree, ref position);
 
-					if (string.IsNullOrEmpty(directoryName))
+					if (directoryName.Length == 0)
 					{
 						break;
 					}
@@ -200,11 +231,26 @@ namespace ValvePak
 					// Files
 					while (true)
 					{
-						var fileName = ReadNullTermUtf8String(Reader, ms);
+						var fileName = ReadNullTermUtf8String(tree, ref position);
 
-						if (string.IsNullOrEmpty(fileName))
+						if (fileName.Length == 0)
 						{
 							break;
+						}
+
+						if (tree.Length - position < EntryMetadataSize)
+						{
+							throw new InvalidDataException("Directory tree ends in the middle of an entry.");
+						}
+
+						var metadata = tree.Slice(position, EntryMetadataSize);
+						position += EntryMetadataSize;
+
+						var terminator = BinaryPrimitives.ReadUInt16LittleEndian(metadata[16..]);
+
+						if (terminator != 0xFFFF)
+						{
+							throw new FormatException($"Invalid terminator, was 0x{terminator:X} but expected 0x{0xFFFF:X}.");
 						}
 
 						var entry = new PackageEntry
@@ -212,30 +258,23 @@ namespace ValvePak
 							FileName = fileName,
 							DirectoryName = directoryName,
 							TypeName = typeName,
-							CRC32 = Reader.ReadUInt32()
+							CRC32 = BinaryPrimitives.ReadUInt32LittleEndian(metadata),
+							ArchiveIndex = BinaryPrimitives.ReadUInt16LittleEndian(metadata[6..]),
+							Offset = BinaryPrimitives.ReadUInt32LittleEndian(metadata[8..]),
+							Length = BinaryPrimitives.ReadUInt32LittleEndian(metadata[12..]),
 						};
-						var smallDataSize = Reader.ReadUInt16();
-						entry.ArchiveIndex = Reader.ReadUInt16();
-						entry.Offset = Reader.ReadUInt32();
-						entry.Length = Reader.ReadUInt32();
 
-						var terminator = Reader.ReadUInt16();
-
-						if (terminator != 0xFFFF)
-						{
-							throw new FormatException($"Invalid terminator, was 0x{terminator:X} but expected 0x{0xFFFF:X}.");
-						}
+						var smallDataSize = BinaryPrimitives.ReadUInt16LittleEndian(metadata[4..]);
 
 						if (smallDataSize > 0)
 						{
-							entry.SmallData = new byte[smallDataSize];
-
-							int bytesRead;
-							int totalRead = 0;
-							while ((bytesRead = Reader.Read(entry.SmallData, totalRead, entry.SmallData.Length - totalRead)) != 0)
+							if (tree.Length - position < smallDataSize)
 							{
-								totalRead += bytesRead;
+								throw new InvalidDataException("Directory tree ends in the middle of preload data.");
 							}
+
+							entry.SmallData = tree.Slice(position, smallDataSize).ToArray();
+							position += smallDataSize;
 						}
 
 						entries.Add(entry);
@@ -251,10 +290,7 @@ namespace ValvePak
 				typeEntries.Add(typeName, entries);
 			}
 
-			Entries = typeEntries;
-
-			// Set to real size that was read for hash verification, in case it was tampered with
-			TreeSize = (uint)(Reader.BaseStream.Position - StreamOffset - HeaderSize);
+			return typeEntries;
 		}
 
 		private void ReadArchiveMD5Section()
@@ -455,28 +491,28 @@ namespace ValvePak
 			return $"{baseFileName}_{archiveIndex:D3}.vpk";
 		}
 
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private static string ReadNullTermUtf8String(BinaryReader reader, MemoryStream ms)
+		/// <summary>
+		/// Reads a null terminated string from the directory tree.
+		/// Reaching the end of the tree reads as an empty string, which ends the current list like Valve's reader does.
+		/// </summary>
+		private static string ReadNullTermUtf8String(ReadOnlySpan<byte> tree, ref int position)
 		{
-			while (true)
+			if (position >= tree.Length)
 			{
-				var b = reader.ReadByte();
-
-				if (b == 0x00)
-				{
-					break;
-				}
-
-				ms.WriteByte(b);
+				return string.Empty;
 			}
 
-			ms.TryGetBuffer(out var buffer);
+			var length = tree[position..].IndexOf((byte)0);
 
-			var str = Encoding.UTF8.GetString(buffer);
+			if (length < 0)
+			{
+				throw new InvalidDataException("Directory tree ends in the middle of a string.");
+			}
 
-			ms.SetLength(0);
+			var value = Encoding.UTF8.GetString(tree.Slice(position, length));
+			position += length + 1;
 
-			return str;
+			return value;
 		}
 	}
 }
