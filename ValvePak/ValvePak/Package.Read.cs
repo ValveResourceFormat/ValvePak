@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
-using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -23,6 +22,8 @@ namespace ValvePak
 		/// <param name="filename">The file to open and read.</param>
 		public void Read(string filename)
 		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
 			SetFileName(filename);
 
 			var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -41,6 +42,7 @@ namespace ValvePak
 		public void Read(Stream input)
 		{
 			ArgumentNullException.ThrowIfNull(input);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 			ThrowIfAlreadyRead();
 
 			if (FileName == null)
@@ -83,6 +85,18 @@ namespace ValvePak
 
 			HeaderSize = (uint)(input.Position - StreamOffset);
 
+			var embeddedDataOffset = (long)HeaderSize + TreeSize;
+
+			// Taking the handle flushes the stream's buffer, so it is done here before any other thread can read from the stream
+			if (input is FileStream fileStream)
+			{
+				Archives[0x7FFF] = new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset);
+			}
+			else
+			{
+				Archives[0x7FFF] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
+			}
+
 			ReadEntries();
 
 			if (Version == 2)
@@ -98,6 +112,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Reads the entry from the VPK package.
+		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer.</param>
@@ -113,6 +128,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Reads the entry from the VPK package into a user-provided output byte array.
+		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer, size of the buffer must be at least <see cref="PackageEntry.TotalLength"/>.</param>
@@ -121,6 +137,7 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(entry);
 			ArgumentNullException.ThrowIfNull(output);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var totalLength = (int)entry.TotalLength;
 
@@ -136,30 +153,8 @@ namespace ValvePak
 
 			if (entry.Length > 0)
 			{
-#pragma warning disable CA2000 // Dispose objects before losing scope
-				var fs = GetFileStream(entry.ArchiveIndex);
-#pragma warning restore CA2000 // Stream is base reader stream when reading from non-split vpk, it should not be disposed
-
-				try
-				{
-					fs.Seek(entry.Offset, SeekOrigin.Current);
-
-					int length = (int)entry.Length;
-					int readOffset = entry.SmallData.Length;
-					int bytesRead;
-					int totalRead = 0;
-					while ((bytesRead = fs.Read(output, readOffset + totalRead, length - totalRead)) != 0)
-					{
-						totalRead += bytesRead;
-					}
-				}
-				finally
-				{
-					if (entry.ArchiveIndex != 0x7FFF)
-					{
-						fs.Dispose();
-					}
-				}
+				var length = (int)entry.Length;
+				ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, length));
 			}
 
 			if (!validateCrc)
@@ -409,85 +404,88 @@ namespace ValvePak
 			return Reader.ReadBytes(size);
 		}
 
-		private Stream GetFileStream(ushort archiveIndex)
+		/// <summary>
+		/// Returns the archive for the given index, opening its chunk file on first use.
+		/// The embedded archive (0x7FFF) is added by <see cref="Read(Stream)"/>.
+		/// </summary>
+		private Archive GetArchive(ushort archiveIndex)
 		{
-			Stream stream;
-
-			if (archiveIndex != 0x7FFF)
+			if (Archives.TryGetValue(archiveIndex, out var archive))
 			{
+				return archive;
+			}
+
+			lock (ArchivesLock)
+			{
+				ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+				if (Archives.TryGetValue(archiveIndex, out archive))
+				{
+					return archive;
+				}
+
+				if (archiveIndex == 0x7FFF)
+				{
+					throw new InvalidOperationException("The package has not been read.");
+				}
+
 				var fileName = GetArchiveIndexFullFilePath(FileName, archiveIndex);
+				var handle = File.OpenHandle(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-				stream = new FileStream(fileName, FileMode.Open, FileAccess.Read);
+				archive = new FileArchive(handle, ownsHandle: true, origin: 0, dataOffset: 0);
+				Archives[archiveIndex] = archive;
+
+				return archive;
 			}
-			else
-			{
-				Debug.Assert(Reader != null);
-
-				stream = Reader.BaseStream;
-				stream.Seek(StreamOffset + HeaderSize + TreeSize, SeekOrigin.Begin);
-			}
-
-			return stream;
 		}
 
 		/// <summary>
-		/// Returns <see cref="MemoryMappedViewStream"/> when possible, otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
+		/// Reads entry data at the given offset until the output is full or the end of the archive is reached.
+		/// This method is safe to call from multiple threads.
+		/// </summary>
+		/// <returns>The number of bytes read.</returns>
+		private int ReadArchiveData(ushort archiveIndex, long offset, Span<byte> output)
+		{
+			var archive = GetArchive(archiveIndex);
+
+			return archive.Read(archive.DataOffset + offset, output);
+		}
+
+		/// <summary>
+		/// Returns a stream that reads the entry directly from a memory mapping of its archive when possible,
+		/// otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
 		/// This only works when entries have no preload bytes.
 		/// Files smaller or equal to 4096 bytes will be read into memory.
 		///
 		/// When trying to map a file in a non-split packages (<see cref="IsDirVPK"/>),
 		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
+		///
+		/// Each archive is mapped once and stays mapped until the package is disposed.
+		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>
+		/// once the package is disposed.
+		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			if (entry.Length <= 4096 || entry.SmallData.Length > 0)
+			if (entry.Length > 4096 && entry.SmallData.Length == 0)
 			{
-				ReadEntry(entry, out var output, false);
-				return new MemoryStream(output);
-			}
+				var archive = GetArchive(entry.ArchiveIndex);
+				var stream = archive.OpenMappedStream(archive.DataOffset + entry.Offset, entry.Length);
 
-			if (!MemoryMappedPaks.TryGetValue(entry.ArchiveIndex, out var stream))
-			{
-				string path;
-
-				// If the package was opened by providing a file path, we can memory map non directory files
-				if (entry.ArchiveIndex == 0x7FFF)
+				if (stream != null)
 				{
-					Debug.Assert(Reader != null);
-
-					if (Reader.BaseStream is FileStream fileStream)
-					{
-						path = fileStream.Name;
-					}
-					else
-					{
-						// This package was read by in a stream that is not FileStream, or not using Read(path).
-						// In this case fallback to reading the file into memory. We could rely on the what was passed into SetFileName, but why.
-						ReadEntry(entry, out var output, false);
-						return new MemoryStream(output);
-					}
+					return stream;
 				}
-				else
-				{
-					path = GetArchiveIndexFullFilePath(FileName, entry.ArchiveIndex);
-				}
-
-				stream = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-				MemoryMappedPaks[entry.ArchiveIndex] = stream;
 			}
 
-			long offset = entry.Offset;
+			ReadEntry(entry, out var output, false);
 
-			if (entry.ArchiveIndex == 0x7FFF)
-			{
-				offset += StreamOffset + HeaderSize + TreeSize;
-			}
-
-			return stream.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);
+			return new MemoryStream(output);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

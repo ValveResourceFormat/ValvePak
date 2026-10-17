@@ -1,7 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.MemoryMappedFiles;
+using System.Threading;
 
 namespace ValvePak
 {
@@ -26,12 +27,14 @@ namespace ValvePak
 		private const char WindowsDirectorySeparator = '\\';
 
 		private BinaryReader? Reader;
-		private readonly Dictionary<int, MemoryMappedFile> MemoryMappedPaks = [];
 
 		/// <summary>
 		/// Position in the read stream where the package starts.
 		/// </summary>
 		private long StreamOffset;
+
+		private readonly ConcurrentDictionary<ushort, Archive> Archives = new();
+		private readonly Lock ArchivesLock = new();
 
 		/// <summary>
 		/// Gets the file name.
@@ -133,6 +136,7 @@ namespace ValvePak
 		public List<ChunkHashFraction> AccessPackFileHashes { get; private set; } = [];
 
 		private CaseInsensitivePackageEntryComparer? Comparer;
+		private bool IsDisposed;
 
 		/// <summary>
 		/// Releases binary reader.
@@ -150,18 +154,23 @@ namespace ValvePak
 		{
 			if (disposing)
 			{
+				lock (ArchivesLock)
+				{
+					IsDisposed = true;
+
+					foreach (var archive in Archives.Values)
+					{
+						archive.Dispose();
+					}
+
+					Archives.Clear();
+				}
+
 				if (Reader != null)
 				{
 					Reader.Dispose();
 					Reader = null;
 				}
-
-				foreach (var stream in MemoryMappedPaks.Values)
-				{
-					stream.Dispose();
-				}
-
-				MemoryMappedPaks.Clear();
 			}
 		}
 
