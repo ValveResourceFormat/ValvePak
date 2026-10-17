@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -69,19 +68,23 @@ namespace ValvePak
 		/// <summary>
 		/// Verify MD5 hashes provided in the VPK.
 		/// </summary>
+		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
+		/// <exception cref="InvalidDataException">The package has no checksums, or a checksum does not match.</exception>
 		public void VerifyHashes()
 		{
+			var reader = Reader ?? throw new InvalidOperationException("The package has not been read.");
+
 			if (Version != 2)
 			{
 				throw new InvalidDataException("Only version 2 is supported.");
 			}
 
-			Debug.Assert(Reader != null);
-			Debug.Assert(TreeChecksum != null);
-			Debug.Assert(ArchiveMD5EntriesChecksum != null);
-			Debug.Assert(WholeFileChecksum != null);
+			if (TreeChecksum == null || ArchiveMD5EntriesChecksum == null || WholeFileChecksum == null)
+			{
+				throw new InvalidDataException("The package has no checksum section.");
+			}
 
-			using var subStream = new SubStream(Reader.BaseStream, StreamOffset + HeaderSize, (int)TreeSize);
+			using var subStream = new SubStream(reader.BaseStream, StreamOffset + HeaderSize, (int)TreeSize);
 			var hash = MD5.HashData(subStream);
 
 			if (!hash.SequenceEqual(TreeChecksum))
@@ -89,7 +92,7 @@ namespace ValvePak
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
 
-			using var subStream2 = new SubStream(Reader.BaseStream, StreamOffset + FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
+			using var subStream2 = new SubStream(reader.BaseStream, StreamOffset + FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
 			hash = MD5.HashData(subStream2);
 
 			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
@@ -97,7 +100,7 @@ namespace ValvePak
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}
 
-			using var subStream3 = new SubStream(Reader.BaseStream, StreamOffset, FileSizeBeforeWholeFileHash);
+			using var subStream3 = new SubStream(reader.BaseStream, StreamOffset, FileSizeBeforeWholeFileHash);
 			hash = MD5.HashData(subStream3);
 
 			if (!hash.SequenceEqual(WholeFileChecksum))

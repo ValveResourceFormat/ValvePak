@@ -269,6 +269,11 @@ namespace ValvePak
 				return;
 			}
 
+			if (ArchiveMD5SectionSize % ChunkHashFraction.SectionEntrySize != 0)
+			{
+				throw new InvalidDataException($"Archive MD5 section size ({ArchiveMD5SectionSize}) is not a multiple of {ChunkHashFraction.SectionEntrySize}.");
+			}
+
 			var entries = (int)(ArchiveMD5SectionSize / ChunkHashFraction.SectionEntrySize);
 
 			AccessPackFileHashes = new List<ChunkHashFraction>(entries);
@@ -329,24 +334,38 @@ namespace ValvePak
 				var signatureSize2 = Reader.ReadInt32();
 				Reader.ReadInt32(); // reserved?
 
-				if (publicKeySize > 0)
+				if (publicKeySize != 0)
 				{
-					PublicKey = Reader.ReadBytes(publicKeySize);
+					PublicKey = ReadSignatureBytes(publicKeySize, "public key");
 				}
 
-				if (signatureSize2 > 0)
+				if (signatureSize2 != 0)
 				{
-					Signature = Reader.ReadBytes(signatureSize2);
+					Signature = ReadSignatureBytes(signatureSize2, "signature");
 				}
 
 				return;
 			}
 
 			SignatureType = ESignatureType.FullFile;
-			PublicKey = Reader.ReadBytes(publicKeySize);
+			PublicKey = ReadSignatureBytes(publicKeySize, "public key");
 
 			var signatureSize = Reader.ReadInt32();
-			Signature = Reader.ReadBytes(signatureSize);
+			Signature = ReadSignatureBytes(signatureSize, "signature");
+		}
+
+		private byte[] ReadSignatureBytes(int size, string name)
+		{
+			Debug.Assert(Reader != null);
+
+			var input = Reader.BaseStream;
+
+			if (size < 0 || size > input.Length - input.Position)
+			{
+				throw new InvalidDataException($"Invalid {name} size in the signature section ({size}).");
+			}
+
+			return Reader.ReadBytes(size);
 		}
 
 		private Stream GetFileStream(ushort archiveIndex)
