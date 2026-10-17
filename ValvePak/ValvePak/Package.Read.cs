@@ -41,6 +41,7 @@ namespace ValvePak
 				throw new InvalidOperationException("If you call Read() directly with a stream, you must call SetFileName() first.");
 			}
 
+			StreamOffset = input.Position;
 			Reader = new BinaryReader(input);
 
 			if (Reader.ReadUInt32() != MAGIC)
@@ -73,7 +74,7 @@ namespace ValvePak
 
 			Version = version;
 
-			HeaderSize = (uint)input.Position;
+			HeaderSize = (uint)(input.Position - StreamOffset);
 
 			ReadEntries();
 
@@ -253,14 +254,14 @@ namespace ValvePak
 			Entries = typeEntries;
 
 			// Set to real size that was read for hash verification, in case it was tampered with
-			TreeSize = (uint)Reader.BaseStream.Position - HeaderSize;
+			TreeSize = (uint)(Reader.BaseStream.Position - StreamOffset - HeaderSize);
 		}
 
 		private void ReadArchiveMD5Section()
 		{
 			Debug.Assert(Reader != null);
 
-			FileSizeBeforeArchiveMD5Entries = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeArchiveMD5Entries = (uint)(Reader.BaseStream.Position - StreamOffset);
 
 			if (ArchiveMD5SectionSize == 0)
 			{
@@ -304,7 +305,7 @@ namespace ValvePak
 
 			TreeChecksum = Reader.ReadBytes(16);
 			ArchiveMD5EntriesChecksum = Reader.ReadBytes(16);
-			FileSizeBeforeWholeFileHash = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeWholeFileHash = (uint)(Reader.BaseStream.Position - StreamOffset);
 			WholeFileChecksum = Reader.ReadBytes(16);
 		}
 
@@ -312,7 +313,7 @@ namespace ValvePak
 		{
 			Debug.Assert(Reader != null);
 
-			FileSizeBeforeSignature = (uint)Reader.BaseStream.Position;
+			FileSizeBeforeSignature = (uint)(Reader.BaseStream.Position - StreamOffset);
 
 			if (SignatureSectionSize == 0)
 			{
@@ -363,7 +364,7 @@ namespace ValvePak
 				Debug.Assert(Reader != null);
 
 				stream = Reader.BaseStream;
-				stream.Seek(HeaderSize + TreeSize, SeekOrigin.Begin);
+				stream.Seek(StreamOffset + HeaderSize + TreeSize, SeekOrigin.Begin);
 			}
 
 			return stream;
@@ -419,11 +420,11 @@ namespace ValvePak
 				MemoryMappedPaks[entry.ArchiveIndex] = stream;
 			}
 
-			var offset = entry.Offset;
+			long offset = entry.Offset;
 
 			if (entry.ArchiveIndex == 0x7FFF)
 			{
-				offset += HeaderSize + TreeSize;
+				offset += StreamOffset + HeaderSize + TreeSize;
 			}
 
 			return stream.CreateViewStream(offset, entry.Length, MemoryMappedFileAccess.Read);

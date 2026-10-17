@@ -81,7 +81,7 @@ namespace ValvePak
 			Debug.Assert(ArchiveMD5EntriesChecksum != null);
 			Debug.Assert(WholeFileChecksum != null);
 
-			using var subStream = new SubStream(Reader.BaseStream, HeaderSize, (int)TreeSize);
+			using var subStream = new SubStream(Reader.BaseStream, StreamOffset + HeaderSize, (int)TreeSize);
 			var hash = MD5.HashData(subStream);
 
 			if (!hash.SequenceEqual(TreeChecksum))
@@ -89,7 +89,7 @@ namespace ValvePak
 				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
 			}
 
-			using var subStream2 = new SubStream(Reader.BaseStream, FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
+			using var subStream2 = new SubStream(Reader.BaseStream, StreamOffset + FileSizeBeforeArchiveMD5Entries, (int)ArchiveMD5SectionSize);
 			hash = MD5.HashData(subStream2);
 
 			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
@@ -97,7 +97,7 @@ namespace ValvePak
 				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
 			}
 
-			using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+			using var subStream3 = new SubStream(Reader.BaseStream, StreamOffset, FileSizeBeforeWholeFileHash);
 			hash = MD5.HashData(subStream3);
 
 			if (!hash.SequenceEqual(WholeFileChecksum))
@@ -149,7 +149,7 @@ namespace ValvePak
 					}
 					else
 					{
-						var offset = entry.ArchiveIndex == 0x7FFF ? HeaderSize + TreeSize : 0;
+						var offset = entry.ArchiveIndex == 0x7FFF ? StreamOffset + HeaderSize + TreeSize : 0;
 						stream.Seek(offset, SeekOrigin.Begin);
 					}
 
@@ -249,7 +249,7 @@ namespace ValvePak
 					return false;
 				}
 
-				using var subStream3 = new SubStream(Reader.BaseStream, 0, FileSizeBeforeWholeFileHash);
+				using var subStream3 = new SubStream(Reader.BaseStream, StreamOffset, FileSizeBeforeWholeFileHash);
 				var hash = MD5.HashData(subStream3);
 
 				if (!hash.SequenceEqual(WholeFileChecksum))
@@ -266,7 +266,7 @@ namespace ValvePak
 				return false;
 			}
 
-			using var subStream = new SubStream(Reader.BaseStream, 0, FileSizeBeforeSignature);
+			using var subStream = new SubStream(Reader.BaseStream, StreamOffset, FileSizeBeforeSignature);
 
 			return rsa.VerifyData(subStream, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 		}

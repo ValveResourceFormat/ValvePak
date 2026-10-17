@@ -29,6 +29,11 @@ namespace ValvePak
 		private readonly Dictionary<int, MemoryMappedFile> MemoryMappedPaks = [];
 
 		/// <summary>
+		/// Position in the read stream where the package starts.
+		/// </summary>
+		private long StreamOffset;
+
+		/// <summary>
 		/// Gets the file name.
 		/// </summary>
 		public string? FileName { get; private set; }

@@ -189,6 +189,8 @@ namespace ValvePak
 		/// use <see cref="Write(string)"/> for that instead.
 		///
 		/// The VPK version that is written is controlled by <see cref="Version"/>.
+		///
+		/// The package is written at the current position of the stream.
 		/// </summary>
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
 		public void Write(Stream stream)
@@ -329,7 +331,7 @@ namespace ValvePak
 
 			writer.Write(NullByte);
 
-			var fileTreeSize = stream.Position - headerSize;
+			var fileTreeSize = stream.Position - streamOffset - headerSize;
 			var chunkHashFractions = new List<ChunkHashFraction>();
 
 			// File data, one archive at a time so only a single chunk file is open and written sequentially
@@ -358,11 +360,13 @@ namespace ValvePak
 			}
 
 			var afterFileData = stream.Position;
-			var fileDataSize = afterFileData - fileTreeSize - headerSize;
+			var fileDataSize = afterFileData - streamOffset - headerSize - fileTreeSize;
 
 			// Archive MD5 section, contains hashes of chunk files
 			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions);
 			writer.Write(archiveMd5SectionBytes);
+
+			var hashedLength = stream.Position - streamOffset;
 
 			// Set tree size
 			// TODO: It is possible to precalculate these sizes to remove seeking
@@ -387,58 +391,47 @@ namespace ValvePak
 			try
 			{
 				// TODO: It is possible to transform these hashes while writing the file to remove seeking and stream reading
-				using var fileTreeMD5 = MD5.Create();
-				using var fullFileMD5 = MD5.Create();
+				using var fileTreeMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+				using var fullFileMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
 
-				stream.ReadExactly(buffer, 0, headerSize);
-				fullFileMD5.TransformBlock(buffer, 0, headerSize, null, 0);
-
-				int bytesRead;
-				var fileTreeRead = 0;
-
-				// Calculate file tree size hash
-				while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
-				{
-					fullFileMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
-
-					fileTreeRead += bytesRead;
-
-					if (fileTreeRead >= fileTreeSize)
-					{
-						fileTreeMD5.TransformFinalBlock(buffer, 0, (int)(fileTreeSize - (fileTreeRead - bytesRead)));
-						break;
-					}
-
-					fileTreeMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
-				}
-
-				// Calculate remaining file data hash
-				while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
-				{
-					fullFileMD5.TransformBlock(buffer, 0, bytesRead, null, 0);
-				}
+				// The file tree is also hashed on its own
+				HashStreamRange(stream, buffer, headerSize, fullFileMD5, null);
+				HashStreamRange(stream, buffer, fileTreeSize, fullFileMD5, fileTreeMD5);
+				HashStreamRange(stream, buffer, hashedLength - headerSize - fileTreeSize, fullFileMD5, null);
 
 				// File tree hash
-				var treeHash = fileTreeMD5.Hash;
-				Debug.Assert(treeHash != null);
-
+				var treeHash = fileTreeMD5.GetHashAndReset();
 				writer.Write(treeHash);
-
-				fullFileMD5.TransformBlock(treeHash, 0, treeHash.Length, null, 0);
+				fullFileMD5.AppendData(treeHash);
 
 				// Archive MD5 section hash
 				var fileHashesMD5 = MD5.HashData(archiveMd5SectionBytes);
 				writer.Write(fileHashesMD5);
+				fullFileMD5.AppendData(fileHashesMD5);
 
 				// Full file hash
-				fullFileMD5.TransformFinalBlock(fileHashesMD5, 0, fileHashesMD5.Length);
-				var fullHash = fullFileMD5.Hash;
-				Debug.Assert(fullHash != null);
-				writer.Write(fullHash);
+				writer.Write(fullFileMD5.GetHashAndReset());
 			}
 			finally
 			{
 				ArrayPool<byte>.Shared.Return(buffer);
+			}
+		}
+
+		/// <summary>
+		/// Reads the given number of bytes from the stream and adds them to the hashes.
+		/// </summary>
+		private static void HashStreamRange(Stream stream, byte[] buffer, long length, IncrementalHash hash, IncrementalHash? secondHash)
+		{
+			while (length > 0)
+			{
+				var count = (int)Math.Min(buffer.Length, length);
+				stream.ReadExactly(buffer, 0, count);
+
+				hash.AppendData(buffer, 0, count);
+				secondHash?.AppendData(buffer, 0, count);
+
+				length -= count;
 			}
 		}
 
