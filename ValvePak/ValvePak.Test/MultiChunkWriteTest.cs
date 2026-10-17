@@ -33,6 +33,7 @@ namespace ValvePak.Test
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
 				package.WriteChunkSize = 1024;
 
 				for (var i = 0; i < 10; i++)
@@ -93,6 +94,7 @@ namespace ValvePak.Test
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
 				package.WriteChunkSize = 1024 * 1024;
 				package.AddFile("a.bin", fileA, multiChunk: true);
 				package.AddFile("b.bin", fileB, multiChunk: true);
@@ -138,6 +140,8 @@ namespace ValvePak.Test
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
+
 				// Both files fit in one chunk, and the 1 MiB fraction boundary falls in the middle of the second file
 				package.AddFile("a.bin", fileA, multiChunk: true);
 				package.AddFile("b.bin", fileB, multiChunk: true);
@@ -168,17 +172,16 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task WritesChunkDataInterleavedByTreeOrder()
+		public async Task WritesChunkDataInAddOrder()
 		{
-			var dirPath = TempPath("interleaved_dir.vpk");
+			var dirPath = TempPath("add_order_dir.vpk");
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
 				package.WriteChunkSize = 1024;
 
-				// Chunk data is written in file tree order, which groups files by extension.
-				// Alternating extensions makes the write order differ from the add order,
-				// so consecutive writes alternate between chunk files.
+				// Chunk data is laid out in the order files are added, not in file tree order which groups files by extension
 				for (var i = 0; i < 3; i++)
 				{
 					var entryA = package.AddFile($"a{i}.txt", CreateTestData(600, (byte)(i * 2)), multiChunk: true);
@@ -187,7 +190,9 @@ namespace ValvePak.Test
 					using (Assert.Multiple())
 					{
 						await Assert.That(entryA.ArchiveIndex).IsEqualTo((ushort)i);
+						await Assert.That(entryA.Offset).IsZero();
 						await Assert.That(entryB.ArchiveIndex).IsEqualTo((ushort)i);
+						await Assert.That(entryB.Offset).IsEqualTo(600u);
 					}
 				}
 
@@ -213,12 +218,13 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task RemoveFileRewritesChunksAndHashes()
+		public async Task RemoveFileLeavesDataInChunkFiles()
 		{
 			var dirPath = TempPath("removed_dir.vpk");
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
 				package.WriteChunkSize = 1024;
 
 				for (var i = 0; i < 9; i++)
@@ -238,20 +244,20 @@ namespace ValvePak.Test
 				package.Write(dirPath);
 			}
 
+			// Data of removed files stays in the chunk files, and the chunk hashes still cover it
 			using (Assert.Multiple())
 			{
-				await Assert.That(new FileInfo(TempPath("removed_000.vpk")).Length).IsEqualTo(800L);
-				await Assert.That(File.Exists(TempPath("removed_001.vpk"))).IsFalse();
+				await Assert.That(new FileInfo(TempPath("removed_000.vpk")).Length).IsEqualTo(1200L);
+				await Assert.That(new FileInfo(TempPath("removed_001.vpk")).Length).IsEqualTo(1200L);
 				await Assert.That(new FileInfo(TempPath("removed_002.vpk")).Length).IsEqualTo(1200L);
 			}
 
 			using var readBack = new Package();
 			readBack.Read(dirPath);
 
-			// Hashes must cover the rewritten chunk layout, not the layout at the time the files were added
 			await AssertPackageVerifies(readBack);
 
-			await Assert.That(readBack.AccessPackFileHashes).Count().IsEqualTo(2);
+			await Assert.That(readBack.AccessPackFileHashes).Count().IsEqualTo(3);
 
 			foreach (var i in new[] { 0, 2, 6, 7, 8 })
 			{
@@ -265,6 +271,7 @@ namespace ValvePak.Test
 		public async Task AddFileThrowsWhenExceedingChunkLimit()
 		{
 			using var package = new Package();
+			package.SetFileName(TempPath("limit_dir.vpk"));
 			package.WriteChunkSize = 1;
 
 			// With a chunk size of 1 every file starts a new chunk
@@ -288,6 +295,7 @@ namespace ValvePak.Test
 
 			using (var package = new Package())
 			{
+				package.SetFileName(dirPath);
 				package.Version = 1;
 				package.WriteChunkSize = 1024;
 
@@ -324,14 +332,160 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task WriteToStreamThrowsWithChunkedFiles()
+		public async Task AddFileWithMultiChunkThrowsWithoutFileName()
 		{
 			using var package = new Package();
+
+			await Assert.That(() => package.AddFile("chunked.bin", CreateTestData(400, 0), multiChunk: true)).ThrowsExactly<InvalidOperationException>()
+				.WithMessageContaining("SetFileName", StringComparison.Ordinal);
+		}
+
+		[Test]
+		public async Task WriteThrowsForDifferentDirectoryFileName()
+		{
+			using var package = new Package();
+			package.SetFileName(TempPath("expected_dir.vpk"));
 			package.AddFile("chunked.bin", CreateTestData(400, 0), multiChunk: true);
 
-			using var output = new MemoryStream();
-			await Assert.That(() => package.Write(output)).ThrowsExactly<InvalidOperationException>()
-				.WithMessageContaining("chunk files", StringComparison.Ordinal);
+			await Assert.That(() => package.Write(TempPath("other_dir.vpk"))).ThrowsExactly<InvalidOperationException>()
+				.WithMessageContaining("expected_dir.vpk", StringComparison.Ordinal);
+
+			await Assert.That(File.Exists(TempPath("other_dir.vpk"))).IsFalse();
+		}
+
+		[Test]
+		public async Task SetFileNameThrowsAfterChunkFileWasCreated()
+		{
+			using var package = new Package();
+			package.SetFileName(TempPath("first_dir.vpk"));
+			package.AddFile("chunked.bin", CreateTestData(400, 0), multiChunk: true);
+
+			await Assert.That(() => package.SetFileName(TempPath("second_dir.vpk"))).ThrowsExactly<InvalidOperationException>();
+		}
+
+		[Test]
+		public async Task WritesChunkDataWhenFilesAreAdded()
+		{
+			var dirPath = TempPath("streamed_dir.vpk");
+
+			using var package = new Package();
+			package.SetFileName(dirPath);
+			package.WriteChunkSize = 1024;
+
+			package.AddFile("a.bin", CreateTestData(600, 1), multiChunk: true);
+			var entry = package.AddFile("b.bin", CreateTestData(600, 2), multiChunk: true);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(new FileInfo(TempPath("streamed_000.vpk")).Length).IsEqualTo(1200L);
+				await Assert.That(File.Exists(dirPath)).IsFalse();
+			}
+
+			// Entries can be read back before the directory file is written
+			package.ReadEntry(entry, out var data);
+			await Assert.That(data).IsEquivalentTo(CreateTestData(600, 2), CollectionOrdering.Matching);
+		}
+
+		[Test]
+		public async Task AddsFilesFromNonSeekableStreams()
+		{
+			var dirPath = TempPath("forward_only_dir.vpk");
+			var largeData = CreateTestData(3 * 1024 * 1024 / 2, 1); // larger than the copy buffer
+
+			using (var package = new Package())
+			{
+				package.SetFileName(dirPath);
+
+				using (var stream = new ForwardOnlyStream(largeData))
+				{
+					var entry = package.AddFile("large.bin", stream, multiChunk: true);
+					await Assert.That(entry.ArchiveIndex).IsZero();
+				}
+
+				using (var stream = new ForwardOnlyStream(CreateTestData(400, 2)))
+				{
+					var entry = package.AddFile("in_dir.bin", stream);
+					await Assert.That(entry.ArchiveIndex).IsEqualTo((ushort)0x7FFF);
+				}
+
+				using (var stream = new ForwardOnlyStream([]))
+				{
+					// Files with no data must stay in the directory file
+					var entry = package.AddFile("empty.bin", stream, multiChunk: true);
+					await Assert.That(entry.ArchiveIndex).IsEqualTo((ushort)0x7FFF);
+				}
+
+				package.Write(dirPath);
+			}
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+
+			await AssertPackageVerifies(readBack);
+			await AssertEntryData(readBack, "large.bin", largeData.Length, 1);
+			await AssertEntryData(readBack, "in_dir.bin", 400, 2);
+			await AssertEntryData(readBack, "empty.bin", 0, 0);
+		}
+
+		[Test]
+		public async Task WritesDirectoryFileToStream()
+		{
+			var dirPath = TempPath("to_stream_dir.vpk");
+
+			using (var package = new Package())
+			{
+				package.SetFileName(dirPath);
+				package.AddFile("chunked.bin", CreateTestData(400, 1), multiChunk: true);
+				package.AddFile("in_dir.bin", CreateTestData(400, 2));
+
+				using var output = new FileStream(dirPath, FileMode.Create, FileAccess.ReadWrite);
+				package.Write(output);
+			}
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+
+			await AssertPackageVerifies(readBack);
+			await AssertEntryData(readBack, "chunked.bin", 400, 1);
+			await AssertEntryData(readBack, "in_dir.bin", 400, 2);
+		}
+
+		[Test]
+		public async Task WritesAgainAfterAddingMoreFiles()
+		{
+			var dirPath = TempPath("rewritten_dir.vpk");
+
+			using (var package = new Package())
+			{
+				package.SetFileName(dirPath);
+				package.WriteChunkSize = 1024;
+
+				package.AddFile("first.bin", CreateTestData(400, 1), multiChunk: true);
+				package.Write(dirPath);
+
+				// The current chunk file stays open, so later files are appended to it
+				package.AddFile("second.bin", CreateTestData(400, 2), multiChunk: true);
+				package.AddFile("third.bin", CreateTestData(400, 3), multiChunk: true);
+				package.AddFile("fourth.bin", CreateTestData(400, 4), multiChunk: true);
+				package.Write(dirPath);
+			}
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(new FileInfo(TempPath("rewritten_000.vpk")).Length).IsEqualTo(1200L);
+				await Assert.That(new FileInfo(TempPath("rewritten_001.vpk")).Length).IsEqualTo(400L);
+			}
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+
+			await AssertPackageVerifies(readBack);
+			await Assert.That(readBack.AccessPackFileHashes).Count().IsEqualTo(2);
+
+			await AssertEntryData(readBack, "first.bin", 400, 1);
+			await AssertEntryData(readBack, "second.bin", 400, 2);
+			await AssertEntryData(readBack, "third.bin", 400, 3);
+			await AssertEntryData(readBack, "fourth.bin", 400, 4);
 		}
 
 		[Test]
@@ -379,6 +533,40 @@ namespace ValvePak.Test
 			}
 
 			return data;
+		}
+
+		/// <summary>
+		/// Stream that can not seek and returns at most 1000 bytes per read.
+		/// </summary>
+		private sealed class ForwardOnlyStream : Stream
+		{
+			private readonly MemoryStream Inner;
+
+			public ForwardOnlyStream(byte[] data)
+			{
+				Inner = new MemoryStream(data, writable: false);
+			}
+
+			public override bool CanRead => true;
+			public override bool CanSeek => false;
+			public override bool CanWrite => false;
+			public override long Length => throw new NotSupportedException();
+			public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+			public override void Flush() { }
+			public override int Read(byte[] buffer, int offset, int count) => Inner.Read(buffer, offset, Math.Min(count, 1000));
+			public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+			public override void SetLength(long value) => throw new NotSupportedException();
+			public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+			protected override void Dispose(bool disposing)
+			{
+				if (disposing)
+				{
+					Inner.Dispose();
+				}
+
+				base.Dispose(disposing);
+			}
 		}
 	}
 }

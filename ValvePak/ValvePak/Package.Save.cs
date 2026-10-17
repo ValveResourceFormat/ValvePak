@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -29,14 +28,19 @@ namespace ValvePak
 		} = 200 * 1024 * 1024;
 
 		/// <summary>
-		/// Index of the chunk file that <see cref="AddFile(string, byte[], bool)"/> is currently assigning files to.
+		/// Size in bytes of the buffer that file data is copied through when it is added to a chunk file.
 		/// </summary>
-		private int CurrentChunkFileIndex;
+		private const int AddFileBufferSize = 1024 * 1024;
 
 		/// <summary>
-		/// Size in bytes assigned to the current chunk file so far.
+		/// The chunk file that files added with multi chunk enabled are currently written to.
 		/// </summary>
-		private uint CurrentChunkFileSize;
+		private ChunkFileWriter? CurrentChunkFile;
+
+		/// <summary>
+		/// Hashes of the chunk files before <see cref="CurrentChunkFile"/>.
+		/// </summary>
+		private readonly List<ChunkHashFraction> FinishedChunkHashFractions = [];
 
 		/// <summary>
 		/// Remove file from current package.
@@ -72,15 +76,183 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
-		/// <param name="multiChunk">If true, this file will be assigned to a numbered chunk file (such as "example_001.vpk") instead of the directory file.
+		/// <param name="multiChunk">If true, the data is written right away into a numbered chunk file (such as "example_001.vpk") instead of being kept in memory for the directory file.
+		/// <see cref="SetFileName(string)"/> must be called first with the path of the directory file, the chunk files are created next to it.
 		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
-		/// Packages containing such files must be written using <see cref="Write(string)"/> so that the chunk files can be written next to the directory file.</param>
+		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 			ArgumentNullException.ThrowIfNull(fileData);
 
+			// Files with no data are only ever written into the directory file
+			if (!multiChunk || fileData.Length == 0)
+			{
+				return AddFileToDirectoryFile(filePath, fileData);
+			}
+
+			var chunkFile = GetChunkFileForNextFile();
+			var offset = chunkFile.Length;
+			chunkFile.Write(fileData);
+
+			return AddChunkFileEntry(filePath, chunkFile, offset, Crc32.HashToUInt32(fileData));
+		}
+
+		/// <summary>
+		/// Add file to current package, reading its data from the current position of the stream to its end.
+		/// Be careful to not add duplicate entries, because this does not check for duplicates.
+		/// </summary>
+		/// <param name="filePath">Full file path for this entry.</param>
+		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
+		/// <param name="multiChunk">If true, the data is copied right away into a numbered chunk file (such as "example_001.vpk") instead of being kept in memory for the directory file.
+		/// <see cref="SetFileName(string)"/> must be called first with the path of the directory file, the chunk files are created next to it.
+		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
+		/// Chunk files stay on disk even if the directory file is never written.</param>
+		/// <returns>The added entry.</returns>
+		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
+		{
+			ArgumentNullException.ThrowIfNull(filePath);
+			ArgumentNullException.ThrowIfNull(fileData);
+
+			if (!multiChunk)
+			{
+				return AddFileToDirectoryFile(filePath, ReadToEnd(fileData));
+			}
+
+			var buffer = ArrayPool<byte>.Shared.Rent(AddFileBufferSize);
+
+			try
+			{
+				var bytesRead = fileData.Read(buffer);
+
+				if (bytesRead == 0)
+				{
+					// Files with no data are only ever written into the directory file
+					return AddFileToDirectoryFile(filePath, []);
+				}
+
+				var chunkFile = GetChunkFileForNextFile();
+				var offset = chunkFile.Length;
+				var crc = new Crc32();
+
+				do
+				{
+					var data = buffer.AsSpan(0, bytesRead);
+					chunkFile.Write(data);
+					crc.Append(data);
+
+					bytesRead = fileData.Read(buffer);
+				}
+				while (bytesRead > 0);
+
+				return AddChunkFileEntry(filePath, chunkFile, offset, crc.GetCurrentHashAsUInt32());
+			}
+			finally
+			{
+				ArrayPool<byte>.Shared.Return(buffer);
+			}
+		}
+
+		/// <summary>
+		/// Reads the rest of the stream into an array.
+		/// </summary>
+		private static byte[] ReadToEnd(Stream stream)
+		{
+			if (stream.CanSeek)
+			{
+				var data = new byte[stream.Length - stream.Position];
+				stream.ReadExactly(data);
+
+				return data;
+			}
+
+			using var memory = new MemoryStream();
+			stream.CopyTo(memory);
+
+			return memory.ToArray();
+		}
+
+		/// <summary>
+		/// Adds an entry whose data is kept in memory until it is written into the directory file.
+		/// </summary>
+		private PackageEntry AddFileToDirectoryFile(string filePath, byte[] fileData)
+		{
+			// Putting file data into SmallData is kind of a hack
+			var entry = CreateEntry(filePath);
+			entry.SmallData = fileData;
+			entry.CRC32 = Crc32.HashToUInt32(fileData);
+			entry.ArchiveIndex = 0x7FFF;
+
+			InsertEntry(entry);
+
+			return entry;
+		}
+
+		/// <summary>
+		/// Adds an entry for the data that was written to the chunk file since it was at the given offset.
+		/// </summary>
+		private PackageEntry AddChunkFileEntry(string filePath, ChunkFileWriter chunkFile, uint offset, uint crc)
+		{
+			// Hand the data to the OS so the entry can be read back before the package is written
+			chunkFile.Flush();
+
+			var entry = CreateEntry(filePath);
+			entry.CRC32 = crc;
+			entry.ArchiveIndex = chunkFile.ArchiveIndex;
+			entry.Offset = offset;
+			entry.Length = chunkFile.Length - offset;
+
+			InsertEntry(entry);
+
+			return entry;
+		}
+
+		/// <summary>
+		/// Returns the chunk file that the next file should be written to, starting a new one if the current one is full.
+		/// </summary>
+		private ChunkFileWriter GetChunkFileForNextFile()
+		{
+			if (FileName == null)
+			{
+				throw new InvalidOperationException("Call SetFileName() with the path of the directory file before adding files with multi chunk enabled, chunk files are created next to it.");
+			}
+
+			var archiveIndex = 0;
+
+			if (CurrentChunkFile != null)
+			{
+				if (CurrentChunkFile.Length < (uint)WriteChunkSize)
+				{
+					return CurrentChunkFile;
+				}
+
+				archiveIndex = CurrentChunkFile.ArchiveIndex + 1;
+
+				if (archiveIndex >= 0x7FFF)
+				{
+					throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
+				}
+			}
+
+			var chunkFile = new ChunkFileWriter((ushort)archiveIndex, GetArchiveIndexFullFilePath(FileName, (ushort)archiveIndex));
+
+			if (CurrentChunkFile != null)
+			{
+				FinishedChunkHashFractions.AddRange(CurrentChunkFile.GetHashFractions());
+				CurrentChunkFile.Dispose();
+			}
+
+			CurrentChunkFile = chunkFile;
+
+			return chunkFile;
+		}
+
+		/// <summary>
+		/// Creates an entry with the directory, file and type names split from the given path.
+		/// </summary>
+		private static PackageEntry CreateEntry(string filePath)
+		{
 			filePath = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar);
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
@@ -106,44 +278,25 @@ namespace ValvePak
 				directory = Space;
 			}
 
-			var archiveIndex = (ushort)0x7FFF;
-
-			// Files with no data are only ever written into the directory file
-			if (multiChunk && fileData.Length > 0)
-			{
-				if (CurrentChunkFileSize >= (uint)WriteChunkSize)
-				{
-					// Current chunk file is full, start a new one
-					CurrentChunkFileIndex++;
-					CurrentChunkFileSize = 0;
-
-					if (CurrentChunkFileIndex >= 0x7FFF)
-					{
-						throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
-					}
-				}
-
-				archiveIndex = (ushort)CurrentChunkFileIndex;
-				CurrentChunkFileSize += (uint)fileData.Length;
-			}
-
-			// Putting file data into SmallData is kind of a hack
-			var entry = new PackageEntry
+			return new PackageEntry
 			{
 				FileName = fileName,
 				DirectoryName = directory,
 				TypeName = extension,
-				SmallData = fileData,
-				CRC32 = Crc32.HashToUInt32(fileData),
-				ArchiveIndex = archiveIndex,
 			};
+		}
 
+		/// <summary>
+		/// Adds the entry to <see cref="Entries"/>, at its sorted position if the package is optimized for binary search.
+		/// </summary>
+		private void InsertEntry(PackageEntry entry)
+		{
 			Entries ??= CreateEntriesDictionary();
 
-			if (!Entries.TryGetValue(extension, out var typeEntries))
+			if (!Entries.TryGetValue(entry.TypeName, out var typeEntries))
 			{
 				typeEntries = [];
-				Entries[extension] = typeEntries;
+				Entries[entry.TypeName] = typeEntries;
 			}
 
 			if (Comparer == null)
@@ -155,16 +308,14 @@ namespace ValvePak
 				var index = typeEntries.BinarySearch(entry, Comparer);
 				typeEntries.Insert(index < 0 ? ~index : index, entry);
 			}
-
-			return entry;
 		}
 
 		/// <summary>
 		/// Opens and writes the given filename.
 		///
 		/// If any files were added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>),
-		/// chunk files (such as "example_001.vpk") will be written next to the given file,
-		/// and the given filename should end with "_dir.vpk".
+		/// their data is already in the chunk files, and this only writes the directory file.
+		/// It must be written to the path given to <see cref="SetFileName(string)"/>, which should end with "_dir.vpk".
 		///
 		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		/// </summary>
@@ -173,20 +324,32 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(filename);
 
-			// Chunk files are named by appending "_###.vpk" to the base name, which is the given filename without the "_dir.vpk" suffix
-			var chunkFileBaseName = StripDirVpkSuffixes(filename, out _);
+			if (CurrentChunkFile != null)
+			{
+				Debug.Assert(FileName != null);
+
+				// Readers find chunk files by appending "_###.vpk" to the directory file name without the "_dir.vpk" suffix
+				var expectedBaseName = Path.GetFullPath(FileName);
+				var writtenBaseName = Path.GetFullPath(StripDirVpkSuffixes(filename, out _));
+
+				if (writtenBaseName != expectedBaseName)
+				{
+					throw new InvalidOperationException($"Chunk files were created for '{FileName}_dir.vpk', the directory file must be written to that path so that they can be found.");
+				}
+			}
 
 			using var fs = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 			fs.SetLength(0);
 
-			Write(fs, chunkFileBaseName);
+			Write(fs);
 		}
 
 		/// <summary>
 		/// Writes to the given <see cref="Stream"/>.
 		///
-		/// This can not write packages that contain files added with multi chunk enabled,
-		/// use <see cref="Write(string)"/> for that instead.
+		/// If any files were added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>),
+		/// their data is already in the chunk files, and this only writes the directory file.
+		/// Readers find the chunk files next to the directory file by name, so the stream should be the file at the path given to <see cref="SetFileName(string)"/>.
 		///
 		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		///
@@ -195,12 +358,7 @@ namespace ValvePak
 		/// <param name="stream">The input <see cref="Stream"/> to write to.</param>
 		public void Write(Stream stream)
 		{
-			Write(stream, chunkFileBaseName: null);
-		}
-
-		private void Write(Stream stream, string? chunkFileBaseName)
-		{
-			if (IsDirVPK)
+			if (Reader != null && IsDirVPK)
 			{
 				throw new InvalidOperationException("This package was opened from a _dir.vpk, writing back is currently unsupported.");
 			}
@@ -217,7 +375,6 @@ namespace ValvePak
 			// TODO: input.SetLength()
 			var streamOffset = stream.Position;
 			ulong fileDataSectionSize = 0;
-			var hasChunkFiles = false;
 
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
@@ -241,7 +398,6 @@ namespace ValvePak
 
 					if (entry.ArchiveIndex != 0x7FFF)
 					{
-						hasChunkFiles = true;
 						continue;
 					}
 
@@ -252,11 +408,6 @@ namespace ValvePak
 						throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
 					}
 				}
-			}
-
-			if (hasChunkFiles && chunkFileBaseName == null)
-			{
-				throw new InvalidOperationException("This package contains files in chunk files, use Write(string) so that the chunk files can be written next to the directory file.");
 			}
 
 			// Header
@@ -273,11 +424,10 @@ namespace ValvePak
 			}
 
 			var headerSize = (int)(stream.Position - streamOffset);
-			var archiveOffsets = new Dictionary<ushort, uint>();
 
-			// Entries grouped per archive index in tree order, which is the order their data offsets are assigned in.
-			// The directory file entries (0x7FFF) sort last.
-			var archiveEntries = new SortedDictionary<ushort, List<PackageEntry>>();
+			// Entries with data in the directory file, in tree order, which is the order their data offsets are assigned in
+			var embeddedEntries = new List<PackageEntry>();
+			uint embeddedDataOffset = 0;
 
 			const byte NullByte = 0;
 
@@ -296,20 +446,15 @@ namespace ValvePak
 					{
 						var fileLength = entry.TotalLength;
 
-						ref var fileOffset = ref CollectionsMarshal.GetValueRefOrAddDefault(archiveOffsets, entry.ArchiveIndex, out _);
+						// Data in chunk files was written when the file was added
+						var fileOffset = entry.Offset;
 
-						if ((ulong)fileOffset + fileLength > uint.MaxValue)
+						if (entry.ArchiveIndex == 0x7FFF)
 						{
-							throw new InvalidOperationException($"Chunk file {entry.ArchiveIndex} exceeds 4GiB.");
+							fileOffset = embeddedDataOffset;
+							embeddedDataOffset += fileLength;
+							embeddedEntries.Add(entry);
 						}
-
-						if (!archiveEntries.TryGetValue(entry.ArchiveIndex, out var entriesForArchive))
-						{
-							entriesForArchive = [];
-							archiveEntries[entry.ArchiveIndex] = entriesForArchive;
-						}
-
-						entriesForArchive.Add(entry);
 
 						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
 						writer.Write(NullByte);
@@ -319,8 +464,6 @@ namespace ValvePak
 						writer.Write(fileOffset);
 						writer.Write(fileLength);
 						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
-
-						fileOffset += fileLength;
 					}
 
 					writer.Write(NullByte);
@@ -332,37 +475,28 @@ namespace ValvePak
 			writer.Write(NullByte);
 
 			var fileTreeSize = stream.Position - streamOffset - headerSize;
-			var chunkHashFractions = new List<ChunkHashFraction>();
 
-			// File data, one archive at a time so only a single chunk file is open and written sequentially
-			foreach (var (archiveIndex, entriesForArchive) in archiveEntries)
+			foreach (var entry in embeddedEntries)
 			{
-				if (archiveIndex == 0x7FFF)
-				{
-					foreach (var entry in entriesForArchive)
-					{
-						writer.Write(GetEntryData(entry));
-					}
-
-					continue;
-				}
-
-				Debug.Assert(chunkFileBaseName != null);
-
-				using var chunkFileWriter = new ChunkFileWriter(archiveIndex, GetArchiveIndexFullFilePath(chunkFileBaseName, archiveIndex), computeHashes: Version >= 2);
-
-				foreach (var entry in entriesForArchive)
-				{
-					chunkFileWriter.Write(GetEntryData(entry));
-				}
-
-				chunkHashFractions.AddRange(chunkFileWriter.Finish());
+				writer.Write(GetEntryData(entry));
 			}
 
 			var afterFileData = stream.Position;
 			var fileDataSize = afterFileData - streamOffset - headerSize - fileTreeSize;
 
 			// Archive MD5 section, contains hashes of chunk files
+			var chunkHashFractions = new List<ChunkHashFraction>();
+
+			if (Version >= 2)
+			{
+				chunkHashFractions.AddRange(FinishedChunkHashFractions);
+
+				if (CurrentChunkFile != null)
+				{
+					chunkHashFractions.AddRange(CurrentChunkFile.GetHashFractions());
+				}
+			}
+
 			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions);
 			writer.Write(archiveMd5SectionBytes);
 
@@ -476,28 +610,42 @@ namespace ValvePak
 		{
 			private const int FileFractionSize = 0x00100000; // 1 MiB
 
-			private readonly ushort archiveIndex;
 			private readonly FileStream stream;
-			private readonly IncrementalHash? md5;
+			private readonly IncrementalHash md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
 			private readonly List<ChunkHashFraction> fractions = [];
 			private uint fractionOffset;
 			private uint bytesInFraction;
 
-			public ChunkFileWriter(ushort archiveIndex, string filePath, bool computeHashes)
+			/// <summary>
+			/// Gets the index of this chunk file.
+			/// </summary>
+			public ushort ArchiveIndex { get; }
+
+			/// <summary>
+			/// Gets the size in bytes of the data written so far.
+			/// </summary>
+			public uint Length => fractionOffset + bytesInFraction;
+
+			/// <summary>
+			/// Creates the chunk file, replacing an existing file.
+			/// </summary>
+			/// <param name="archiveIndex">Index of this chunk file.</param>
+			/// <param name="filePath">Path of the chunk file.</param>
+			public ChunkFileWriter(ushort archiveIndex, string filePath)
 			{
-				this.archiveIndex = archiveIndex;
-				stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 65536);
-				md5 = computeHashes ? IncrementalHash.CreateHash(HashAlgorithmName.MD5) : null;
+				ArchiveIndex = archiveIndex;
+				stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read, bufferSize: 65536);
 			}
 
 			public void Write(ReadOnlySpan<byte> data)
 			{
-				stream.Write(data);
-
-				if (md5 == null)
+				// Offsets and lengths in the directory tree are 32-bit
+				if ((long)Length + data.Length > uint.MaxValue)
 				{
-					return;
+					throw new InvalidOperationException($"Chunk file {ArchiveIndex} would exceed 4 GiB.");
 				}
+
+				stream.Write(data);
 
 				while (!data.IsEmpty)
 				{
@@ -508,42 +656,46 @@ namespace ValvePak
 
 					if (bytesInFraction == FileFractionSize)
 					{
-						AddFraction();
+						fractions.Add(CreateFraction(md5.GetHashAndReset()));
+						fractionOffset += bytesInFraction;
+						bytesInFraction = 0;
 					}
 				}
 			}
 
-			public List<ChunkHashFraction> Finish()
+			public void Flush()
 			{
-				if (md5 != null)
-				{
-					// The last fraction covers the remaining data, and is zero sized when
-					// the chunk file size is an exact multiple of the fraction size
-					AddFraction();
-				}
-
-				return fractions;
+				stream.Flush();
 			}
 
-			private void AddFraction()
+			/// <summary>
+			/// Returns the hashes of the data written so far. The last fraction covers the data after the last full fraction,
+			/// and is zero sized when the chunk file size is an exact multiple of the fraction size.
+			/// </summary>
+			public List<ChunkHashFraction> GetHashFractions()
 			{
-				fractions.Add(new ChunkHashFraction
+				var allFractions = new List<ChunkHashFraction>(fractions);
+				allFractions.Add(CreateFraction(md5.GetCurrentHash()));
+
+				return allFractions;
+			}
+
+			private ChunkHashFraction CreateFraction(byte[] checksum)
+			{
+				return new ChunkHashFraction
 				{
-					ArchiveIndex = archiveIndex,
+					ArchiveIndex = ArchiveIndex,
 					HashType = EHashType.MD5,
 					Offset = fractionOffset,
 					Length = bytesInFraction,
-					Checksum = md5!.GetHashAndReset(),
-				});
-
-				fractionOffset += bytesInFraction;
-				bytesInFraction = 0;
+					Checksum = checksum,
+				};
 			}
 
 			public void Dispose()
 			{
 				stream.Dispose();
-				md5?.Dispose();
+				md5.Dispose();
 			}
 		}
 	}

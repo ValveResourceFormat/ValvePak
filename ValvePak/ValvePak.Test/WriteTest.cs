@@ -201,7 +201,8 @@ namespace ValvePak.Test
 		public async Task AddFileThrowsOnNullData()
 		{
 			using var package = new Package();
-			await Assert.That(() => package.AddFile("test.txt", null!)).ThrowsExactly<ArgumentNullException>();
+			await Assert.That(() => package.AddFile("test.txt", (byte[])null!)).ThrowsExactly<ArgumentNullException>();
+			await Assert.That(() => package.AddFile("test.txt", (Stream)null!)).ThrowsExactly<ArgumentNullException>();
 		}
 
 		[Test]

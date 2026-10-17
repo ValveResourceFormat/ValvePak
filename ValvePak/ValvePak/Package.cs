@@ -154,6 +154,9 @@ namespace ValvePak
 		{
 			if (disposing)
 			{
+				CurrentChunkFile?.Dispose();
+				CurrentChunkFile = null;
+
 				lock (ArchivesLock)
 				{
 					IsDisposed = true;
@@ -190,13 +193,19 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Sets the file name. This must be called before the package is read.
+		/// Sets the file name, which chunk file names are built from. This must be called before the package is read,
+		/// or before files are added with multi chunk enabled when creating a package.
 		/// </summary>
 		/// <param name="fileName">Filename.</param>
 		public void SetFileName(string fileName)
 		{
 			ArgumentNullException.ThrowIfNull(fileName);
 			ThrowIfAlreadyRead();
+
+			if (CurrentChunkFile != null)
+			{
+				throw new InvalidOperationException("The file name can not be changed after files were added to chunk files.");
+			}
 
 			FileName = StripDirVpkSuffixes(fileName, out var isDirVpk);
 			IsDirVPK = isDirVpk;

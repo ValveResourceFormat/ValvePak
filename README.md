@@ -181,20 +181,28 @@ package.Write("pak01_modified.vpk");
 
 ### Split into chunk files
 
-Files added with `multiChunk` are written into numbered chunk files (`pak01_000.vpk`, `pak01_001.vpk`, ...) next to the directory file instead of into the directory file itself. A new chunk file is started once the current one reaches `WriteChunkSize` (200 MiB by default). The directory file contains MD5 hashes of the chunk files, which can be verified with `VerifyChunkHashes`.
+Files added with `multiChunk` are written right away into numbered chunk files (`pak01_000.vpk`, `pak01_001.vpk`, ...) next to the directory file, so their data is not kept in memory. A new chunk file is started once the current one reaches `WriteChunkSize` (200 MiB by default). `Write` then only writes the directory file, which contains MD5 hashes of the chunk files that can be verified with `VerifyChunkHashes`.
 
 ```csharp
 using var package = new Package();
 
+// Chunk files are created next to the directory file, so its path must be set first
+package.SetFileName("pak01_dir.vpk");
+
 // Optionally lower the maximum chunk file size, in bytes
 package.WriteChunkSize = 100 * 1024 * 1024;
 
-package.AddFile("models/example.vmdl", File.ReadAllBytes("example.vmdl"), multiChunk: true);
+// Data can be streamed from a file instead of being read into memory
+using (var stream = File.OpenRead("example.vmdl"))
+{
+	package.AddFile("models/example.vmdl", stream, multiChunk: true);
+}
 
 // Files added without multiChunk still go into the directory file
 package.AddFile("manifest.txt", File.ReadAllBytes("manifest.txt"));
 
-// Multi chunk packages must be written to a path so that the chunk files can be created,
-// and the filename should end with "_dir.vpk"
+// The directory file must be written to the same path
 package.Write("pak01_dir.vpk");
 ```
+
+Removing a file that is already in a chunk file leaves its data in place. Chunk files stay on disk if the package is disposed without being written.
