@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -700,6 +701,273 @@ namespace ValvePak.Test
 			package.Dispose();
 
 			await Assert.That(package.IsSignatureValid()).IsFalse();
+		}
+
+		[Test]
+		public async Task VerifyHashesThrowsWhenPackageWasNotRead()
+		{
+			using var package = new Package();
+
+			await Assert.That(() => package.VerifyHashes()).ThrowsExactly<InvalidOperationException>()
+				.WithMessage("The package has not been read.", StringComparison.Ordinal);
+
+			package.SetFileName("a.vpk");
+
+			await Assert.That(() => package.VerifyHashes()).ThrowsExactly<InvalidOperationException>();
+		}
+
+		[Test]
+		[Arguments(false)]
+		[Arguments(true)]
+		public async Task ReadsPackageStartingAtNonZeroStreamOffset(bool fromFile)
+		{
+			var directory = Directory.CreateTempSubdirectory("ValvePakTest_").FullName;
+
+			try
+			{
+				var expected = ReadAllEntryData(Path.Combine(AppContext.BaseDirectory, "Files", "test_single.vpk"));
+
+				using (var package = await ReadEmbeddedPackage("test_single.vpk", fromFile, directory))
+				{
+					await Assert.That(package.HeaderSize).IsEqualTo(28u);
+					await Assert.That(package.Entries).IsNotNull();
+
+					var entryCount = 0;
+
+					foreach (var entries in package.Entries.Values)
+					{
+						foreach (var entry in entries)
+						{
+							var path = entry.GetFullPath();
+
+							package.ReadEntry(entry, out var data, validateCrc: true);
+
+							using var mapped = package.GetMemoryMappedStreamIfPossible(entry);
+							using var mappedCopy = new MemoryStream();
+							await mapped.CopyToAsync(mappedCopy);
+
+							using (Assert.Multiple())
+							{
+								await Assert.That(data).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
+								await Assert.That(mappedCopy.ToArray()).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
+							}
+
+							entryCount++;
+						}
+					}
+
+					await Assert.That(entryCount).IsEqualTo(expected.Count);
+					await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
+					await Assert.That(() => package.VerifyFileChecksums()).ThrowsNothing();
+				}
+			}
+			finally
+			{
+				Directory.Delete(directory, recursive: true);
+			}
+		}
+
+		[Test]
+		[Arguments(false)]
+		[Arguments(true)]
+		public async Task VerifiesSignatureOfPackageStartingAtNonZeroStreamOffset(bool fromFile)
+		{
+			var directory = Directory.CreateTempSubdirectory("ValvePakTest_").FullName;
+
+			try
+			{
+				using var package = await ReadEmbeddedPackage("platform_misc_dir.vpk", fromFile, directory);
+
+				await Assert.That(package.Signature).IsNotNull();
+				await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
+				await Assert.That(package.IsSignatureValid()).IsTrue();
+			}
+			finally
+			{
+				Directory.Delete(directory, recursive: true);
+			}
+		}
+
+		[Test]
+		public async Task ThrowsOnArchiveMD5SectionSizeNotMultipleOfEntrySize()
+		{
+			var package = CreateSmallPackageBytes();
+
+			foreach (var size in new uint[] { 1, 27, 29, 55 })
+			{
+				var patched = (byte[])package.Clone();
+				BinaryPrimitives.WriteUInt32LittleEndian(patched.AsSpan(ArchiveMD5SectionSizeOffset), size);
+
+				await AssertReadThrowsInvalidData(patched, $"Archive MD5 section size ({size}) is not a multiple of 28.");
+			}
+		}
+
+		[Test]
+		public async Task ThrowsOnTreeSizeLargerThanRestOfFile()
+		{
+			var package = CreateSmallPackageBytes();
+			var restOfFile = package.Length - 28;
+
+			foreach (var size in new uint[] { (uint)restOfFile + 1, (uint)package.Length, uint.MaxValue })
+			{
+				var patched = (byte[])package.Clone();
+				BinaryPrimitives.WriteUInt32LittleEndian(patched.AsSpan(TreeSizeOffset), size);
+
+				await AssertReadThrowsInvalidData(patched, $"Directory tree size ({size}) is larger than the rest of the file ({restOfFile}).");
+			}
+		}
+
+		[Test]
+		[Arguments(1000)]
+		[Arguments(-1)]
+		public async Task ThrowsOnInvalidPublicKeySize(int publicKeySize)
+		{
+			var package = CreateSignedPackageBytes(publicKeySize);
+
+			await AssertReadThrowsInvalidData(package, $"Invalid public key size in the signature section ({publicKeySize}).");
+		}
+
+		[Test]
+		[Arguments(1000)]
+		[Arguments(-1)]
+		public async Task ThrowsOnInvalidSignatureSize(int signatureSize)
+		{
+			var package = CreateSignedPackageBytes(0, signatureSize);
+
+			await AssertReadThrowsInvalidData(package, $"Invalid signature size in the signature section ({signatureSize}).");
+		}
+
+		[Test]
+		[Arguments(1000, 0, "public key")]
+		[Arguments(-1, 0, "public key")]
+		[Arguments(0, 1000, "signature")]
+		[Arguments(0, -1, "signature")]
+		public async Task ThrowsOnInvalidSizeInNewSignatureSection(int publicKeySize, int signatureSize, string name)
+		{
+			var size = publicKeySize != 0 ? publicKeySize : signatureSize;
+
+			// Magic, signature type, public key size, signature size, reserved
+			var package = CreateSignedPackageBytes(Package.MAGIC, 1, publicKeySize, signatureSize, 0);
+
+			await AssertReadThrowsInvalidData(package, $"Invalid {name} size in the signature section ({size}).");
+		}
+
+		[Test]
+		[Arguments("abc")]
+		[Arguments("txt\0dir")]
+		[Arguments("txt\0dir\0file")]
+		public async Task ThrowsOnDirectoryTreeEndingInTheMiddleOfString(string tree)
+		{
+			var treeBytes = Encoding.ASCII.GetBytes(tree);
+			var package = new byte[12 + treeBytes.Length];
+
+			BinaryPrimitives.WriteUInt32LittleEndian(package, (uint)Package.MAGIC);
+			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(4), 1);
+			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(8), (uint)treeBytes.Length);
+			treeBytes.CopyTo(package, 12);
+
+			await AssertReadThrowsInvalidData(package, "Directory tree ends in the middle of a string.");
+		}
+
+		private const int TreeSizeOffset = 8;
+		private const int ArchiveMD5SectionSizeOffset = 16;
+		private const int SignatureSectionSizeOffset = 24;
+		private const int EmbeddedPrefixLength = 1000;
+		private const int EmbeddedSuffixLength = 50;
+
+		private static byte[] CreateSmallPackageBytes()
+		{
+			using var package = new Package();
+			package.AddFile("hello.txt", Encoding.UTF8.GetBytes("world"));
+
+			using var output = new MemoryStream();
+			package.Write(output);
+
+			return output.ToArray();
+		}
+
+		/// <summary>
+		/// Creates a package whose signature section holds the given little-endian integers.
+		/// </summary>
+		private static byte[] CreateSignedPackageBytes(params int[] signatureSection)
+		{
+			var package = CreateSmallPackageBytes();
+			var signatureSize = signatureSection.Length * sizeof(int);
+			var result = new byte[package.Length + signatureSize];
+
+			package.CopyTo(result, 0);
+			BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(SignatureSectionSizeOffset), (uint)signatureSize);
+
+			for (var i = 0; i < signatureSection.Length; i++)
+			{
+				BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(package.Length + (i * sizeof(int))), signatureSection[i]);
+			}
+
+			return result;
+		}
+
+		private static async Task AssertReadThrowsInvalidData(byte[] data, string message)
+		{
+			using var package = new Package();
+			package.SetFileName("a.vpk");
+
+			using var ms = new MemoryStream(data);
+			await Assert.That(() => package.Read(ms)).ThrowsExactly<InvalidDataException>()
+				.WithMessage(message, StringComparison.Ordinal);
+		}
+
+		private static Dictionary<string, byte[]> ReadAllEntryData(string path)
+		{
+			var result = new Dictionary<string, byte[]>();
+
+			using var package = new Package();
+			package.Read(path);
+
+			foreach (var entries in package.Entries!.Values)
+			{
+				foreach (var entry in entries)
+				{
+					package.ReadEntry(entry, out var data);
+					result[entry.GetFullPath()] = data;
+				}
+			}
+
+			return result;
+		}
+
+		/// <summary>
+		/// Reads a fixture that is surrounded by other bytes, from a stream that is positioned at the start of the package.
+		/// </summary>
+		private static async Task<Package> ReadEmbeddedPackage(string fixtureName, bool fromFile, string directory)
+		{
+			var fixture = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Files", fixtureName));
+			var embedded = new byte[EmbeddedPrefixLength + fixture.Length + EmbeddedSuffixLength];
+
+			Array.Fill(embedded, (byte)0xCD);
+			fixture.CopyTo(embedded, EmbeddedPrefixLength);
+
+			var path = Path.Combine(directory, fixtureName);
+			var package = new Package();
+			package.SetFileName(path);
+
+			if (fromFile)
+			{
+				await File.WriteAllBytesAsync(path, embedded);
+
+#pragma warning disable CA2000 // The package disposes the stream
+				var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+#pragma warning restore CA2000
+				fileStream.Position = EmbeddedPrefixLength;
+				package.Read(fileStream);
+			}
+			else
+			{
+				var memoryStream = new MemoryStream(embedded);
+				memoryStream.Position = EmbeddedPrefixLength;
+				package.Read(memoryStream);
+			}
+
+			return package;
 		}
 
 		private static async Task TestVPKExtraction(string path)

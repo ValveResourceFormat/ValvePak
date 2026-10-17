@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -378,6 +379,121 @@ namespace ValvePak.Test
 			});
 
 			await Assert.That(result).IsFalse();
+		}
+
+		[Test]
+		[Arguments(0, 2u)]
+		[Arguments(100, 2u)]
+		[Arguments(100, 1u)]
+		public async Task WriteIntoLongerStream(int position, uint version)
+		{
+			const int StreamLength = 10000;
+
+			using var output = new MemoryStream();
+			output.SetLength(StreamLength);
+			Array.Fill(output.GetBuffer(), (byte)0xCD, 0, StreamLength);
+			output.Position = position;
+
+			using (var package = new Package())
+			{
+				package.Version = version;
+				package.AddFile("hello.txt", Encoding.UTF8.GetBytes("world"));
+				package.AddFile("folder/image.jpg", Encoding.UTF8.GetBytes("not really a jpg"));
+				package.Write(output);
+			}
+
+			var firstChangedPrefixByte = output.GetBuffer().AsSpan(0, position).IndexOfAnyExcept((byte)0xCD);
+			await Assert.That(firstChangedPrefixByte).IsEqualTo(-1);
+
+			output.Position = position;
+
+			using var readBack = new Package();
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			await Assert.That(readBack.Version).IsEqualTo(version);
+
+			if (version >= 2)
+			{
+				await Assert.That(() => readBack.VerifyHashes()).ThrowsNothing();
+			}
+
+			await Assert.That(() => readBack.VerifyFileChecksums()).ThrowsNothing();
+
+			var hello = readBack.FindEntry("hello.txt");
+			var image = readBack.FindEntry("folder/image.jpg");
+
+			await Assert.That(hello).IsNotNull();
+			await Assert.That(image).IsNotNull();
+
+			readBack.ReadEntry(hello, out var helloData);
+			readBack.ReadEntry(image, out var imageData);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(Encoding.UTF8.GetString(helloData)).IsEqualTo("world");
+				await Assert.That(Encoding.UTF8.GetString(imageData)).IsEqualTo("not really a jpg");
+			}
+		}
+
+		[Test]
+		[Arguments(StringComparison.Ordinal)]
+		[Arguments(StringComparison.OrdinalIgnoreCase)]
+		public async Task AddedFilesCanBeFoundAfterOptimizingForBinarySearch(StringComparison comparison)
+		{
+			var path = Path.Combine(AppContext.BaseDirectory, "Files", "platform_misc_dir.vpk");
+
+			using var package = new Package();
+			package.OptimizeEntriesForBinarySearch(comparison);
+			package.Read(path);
+
+			var existingEntries = new List<PackageEntry>();
+
+			foreach (var entries in package.Entries!.Values)
+			{
+				existingEntries.AddRange(entries);
+			}
+
+			string[] addedPaths =
+			[
+				"addons/chess/zzz.vdf",
+				"addons/chess/a.vdf",
+				"addons/chess/chess2.vdf",
+				"new/folder/file.vdf",
+				"b.vdf",
+				"addons/chess/c.vdf",
+				"added.txt",
+			];
+
+			var addedEntries = new List<PackageEntry>();
+
+			foreach (var addedPath in addedPaths)
+			{
+				addedEntries.Add(package.AddFile(addedPath, Encoding.UTF8.GetBytes(addedPath)));
+			}
+
+			foreach (var entry in existingEntries)
+			{
+				await Assert.That(package.FindEntry(entry.GetFullPath())).IsEqualTo(entry);
+			}
+
+			foreach (var entry in addedEntries)
+			{
+				await Assert.That(package.FindEntry(entry.GetFullPath())).IsEqualTo(entry);
+			}
+
+			var upperCaseEntry = package.FindEntry("ADDONS/CHESS/ZZZ.VDF");
+
+			if (comparison == StringComparison.OrdinalIgnoreCase)
+			{
+				await Assert.That(upperCaseEntry).IsEqualTo(addedEntries[0]);
+			}
+			else
+			{
+				await Assert.That(upperCaseEntry).IsNull();
+			}
+
+			await Assert.That(package.FindEntry("addons/chess/missing.vdf")).IsNull();
 		}
 
 		private sealed class NonSeekableStream : Stream

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -80,6 +82,83 @@ namespace ValvePak.Test
 			using var stream2 = package.GetMemoryMappedStreamIfPossible(package.FindEntry("steammessages_base.proto")!);
 			await Assert.That(stream2).IsAssignableTo<MemoryStream>();
 			await VerifyProto(stream2);
+		}
+
+		[Test]
+		[Arguments("test_single.vpk", false)]
+		[Arguments("test_single.vpk", true)]
+		[Arguments("test_dir.vpk", false)]
+		public async Task ReadsEntriesConcurrently(string fileName, bool fromMemory)
+		{
+			const int Iterations = 5;
+			const int ReadsPerEntry = 8;
+
+			var path = Path.Combine(AppContext.BaseDirectory, "Files", fileName);
+			var expected = new Dictionary<string, byte[]>();
+
+			using (var reference = new Package())
+			{
+				reference.Read(path);
+
+				foreach (var entries in reference.Entries!.Values)
+				{
+					foreach (var entry in entries)
+					{
+						reference.ReadEntry(entry, out var data);
+						expected[entry.GetFullPath()] = data;
+					}
+				}
+			}
+
+			using var package = new Package();
+
+			if (fromMemory)
+			{
+				package.SetFileName(path);
+				package.Read(new MemoryStream(await File.ReadAllBytesAsync(path)));
+			}
+			else
+			{
+				package.Read(path);
+			}
+
+			var allEntries = new List<PackageEntry>();
+
+			foreach (var entries in package.Entries!.Values)
+			{
+				allEntries.AddRange(entries);
+			}
+
+			var mismatches = new ConcurrentBag<string>();
+			var options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+
+			for (var iteration = 0; iteration < Iterations; iteration++)
+			{
+				Parallel.For(0, allEntries.Count * ReadsPerEntry, options, i =>
+				{
+					var entry = allEntries[i % allEntries.Count];
+					var fullPath = entry.GetFullPath();
+
+					package.ReadEntry(entry, out var data);
+
+					if (!data.AsSpan().SequenceEqual(expected[fullPath]))
+					{
+						mismatches.Add($"ReadEntry {fullPath}");
+					}
+
+					using var stream = package.GetMemoryMappedStreamIfPossible(entry);
+					using var copy = new MemoryStream();
+					stream.CopyTo(copy);
+
+					if (!copy.ToArray().AsSpan().SequenceEqual(expected[fullPath]))
+					{
+						mismatches.Add($"GetMemoryMappedStreamIfPossible {fullPath}");
+					}
+				});
+			}
+
+			await Assert.That(allEntries).Count().IsEqualTo(expected.Count);
+			await Assert.That(mismatches).IsEmpty();
 		}
 
 		[Test]
