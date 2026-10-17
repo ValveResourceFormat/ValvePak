@@ -117,6 +117,7 @@ namespace ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer.</param>
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -133,6 +134,7 @@ namespace ValvePak
 		/// <param name="entry">Package entry.</param>
 		/// <param name="output">Output buffer, size of the buffer must be at least <see cref="PackageEntry.TotalLength"/>.</param>
 		/// <param name="validateCrc">If true, CRC32 will be calculated and verified for read data.</param>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public void ReadEntry(PackageEntry entry, byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -154,7 +156,12 @@ namespace ValvePak
 			if (entry.Length > 0)
 			{
 				var length = (int)entry.Length;
-				ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, length));
+				var bytesRead = ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, length));
+
+				if (bytesRead != length)
+				{
+					throw new EndOfStreamException($"Reached the end of archive {entry.ArchiveIndex} after reading {bytesRead} of {length} bytes for '{entry.GetFullPath()}'.");
+				}
 			}
 
 			if (!validateCrc)
@@ -467,6 +474,7 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
 		/// <returns>Stream for a given package entry contents.</returns>
+		/// <exception cref="EndOfStreamException">The archive ends before all bytes of the entry could be read.</exception>
 		public Stream GetMemoryMappedStreamIfPossible(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);

@@ -374,6 +374,65 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		[Arguments("test_dir.vpk", false)]
+		[Arguments("test_single.vpk", false)]
+		[Arguments("test_single.vpk", true)]
+		public async Task ThrowsWhenEntryExtendsPastEndOfArchive(string fileName, bool fromMemory)
+		{
+			var directory = Directory.CreateTempSubdirectory("ValvePakTest_").FullName;
+
+			try
+			{
+				// Cut off the last entry (steammessages_clientserver.proto, 39177 bytes) and the end of the one before it (steammessages_base.proto, 2563 bytes)
+				const int Cut = 39177 + 100;
+
+				File.Copy(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"), Path.Combine(directory, "test_dir.vpk"));
+				var chunk = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Files", "test_000.vpk"));
+				await File.WriteAllBytesAsync(Path.Combine(directory, "test_000.vpk"), chunk[..^Cut]);
+
+				var single = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Files", "test_single.vpk"));
+				await File.WriteAllBytesAsync(Path.Combine(directory, "test_single.vpk"), single[..^Cut]);
+
+				var path = Path.Combine(directory, fileName);
+
+				using var package = new Package();
+
+				if (fromMemory)
+				{
+					package.SetFileName(path);
+					package.Read(new MemoryStream(await File.ReadAllBytesAsync(path)));
+				}
+				else
+				{
+					package.Read(path);
+				}
+
+				var kitten = package.FindEntry("kitten.jpg")!;
+				await Assert.That(() => package.ReadEntry(kitten, out _, validateCrc: true)).ThrowsNothing();
+
+				await AssertEntryIsTruncated(package, "steammessages_base.proto");
+				await AssertEntryIsTruncated(package, "steammessages_clientserver.proto");
+			}
+			finally
+			{
+				Directory.Delete(directory, recursive: true);
+			}
+		}
+
+		private static async Task AssertEntryIsTruncated(Package package, string fileName)
+		{
+			var entry = package.FindEntry(fileName)!;
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(() => package.ReadEntry(entry, out _, validateCrc: false)).ThrowsExactly<EndOfStreamException>();
+				await Assert.That(() => package.ReadEntry(entry, out _, validateCrc: true)).ThrowsExactly<EndOfStreamException>();
+				await Assert.That(() => package.ReadEntry(entry, new byte[entry.TotalLength], validateCrc: false)).ThrowsExactly<EndOfStreamException>();
+				await Assert.That(() => package.GetMemoryMappedStreamIfPossible(entry)).ThrowsExactly<EndOfStreamException>();
+			}
+		}
+
+		[Test]
 		public async Task TestFileChecksums()
 		{
 			var path = Path.Combine(AppContext.BaseDirectory, "Files", "broken_dir.vpk");
