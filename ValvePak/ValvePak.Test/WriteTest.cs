@@ -180,14 +180,34 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task WriteThrowsOnNonSeekableStream()
+		[Arguments(1u)]
+		[Arguments(2u)]
+		public async Task WritesToNonSeekableStream(uint version)
 		{
-			using var package = new Package();
-			package.AddFile("test.txt", Encoding.UTF8.GetBytes("hello"));
-
 			using var nonSeekable = new NonSeekableStream();
-			await Assert.That(() => package.Write(nonSeekable)).ThrowsExactly<InvalidOperationException>()
-				.WithMessage("Stream must be seekable and readable.", StringComparison.Ordinal);
+
+			using (var package = new Package())
+			{
+				package.Version = version;
+				package.AddFile("test.txt", Encoding.UTF8.GetBytes("hello"));
+				package.Write(nonSeekable);
+			}
+
+			using var output = new MemoryStream(nonSeekable.ToArray());
+			using var readBack = new Package();
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			if (version >= 2)
+			{
+				await Assert.That(() => readBack.VerifyHashes()).ThrowsNothing();
+			}
+
+			var entry = readBack.FindEntry("test.txt");
+			await Assert.That(entry).IsNotNull();
+
+			readBack.ReadEntry(entry, out var data);
+			await Assert.That(Encoding.UTF8.GetString(data)).IsEqualTo("hello");
 		}
 
 		[Test]
@@ -497,18 +517,35 @@ namespace ValvePak.Test
 			await Assert.That(package.FindEntry("addons/chess/missing.vdf")).IsNull();
 		}
 
+		/// <summary>
+		/// Write only stream that can not seek, collecting the written bytes.
+		/// </summary>
 		private sealed class NonSeekableStream : Stream
 		{
-			public override bool CanRead => true;
+			private readonly MemoryStream Inner = new();
+
+			public override bool CanRead => false;
 			public override bool CanSeek => false;
 			public override bool CanWrite => true;
-			public override long Length => 0;
-			public override long Position { get => 0; set { } }
+			public override long Length => throw new NotSupportedException();
+			public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
 			public override void Flush() { }
-			public override int Read(byte[] buffer, int offset, int count) => 0;
+			public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 			public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-			public override void SetLength(long value) { }
-			public override void Write(byte[] buffer, int offset, int count) { }
+			public override void SetLength(long value) => throw new NotSupportedException();
+			public override void Write(byte[] buffer, int offset, int count) => Inner.Write(buffer, offset, count);
+
+			public byte[] ToArray() => Inner.ToArray();
+
+			protected override void Dispose(bool disposing)
+			{
+				if (disposing)
+				{
+					Inner.Dispose();
+				}
+
+				base.Dispose(disposing);
+			}
 		}
 	}
 }

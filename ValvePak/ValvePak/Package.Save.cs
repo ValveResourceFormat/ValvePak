@@ -178,7 +178,6 @@ namespace ValvePak
 		/// </summary>
 		private PackageEntry AddFileToDirectoryFile(string filePath, byte[] fileData)
 		{
-			// Putting file data into SmallData is kind of a hack
 			var entry = CreateEntry(filePath);
 			entry.SmallData = fileData;
 			entry.CRC32 = Crc32.HashToUInt32(fileData);
@@ -338,8 +337,7 @@ namespace ValvePak
 				}
 			}
 
-			using var fs = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-			fs.SetLength(0);
+			using var fs = new FileStream(filename, FileMode.Create, FileAccess.Write, FileShare.None);
 
 			Write(fs);
 		}
@@ -365,20 +363,9 @@ namespace ValvePak
 
 			ArgumentNullException.ThrowIfNull(stream);
 
-			if (!stream.CanSeek || !stream.CanRead)
-			{
-				throw new InvalidOperationException("Stream must be seekable and readable.");
-			}
-
-			using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-
-			// TODO: input.SetLength()
-			var streamOffset = stream.Position;
-			ulong fileDataSectionSize = 0;
-
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
-			// Precalculate the file tree and set data offsets
+			// Group the entries by type and directory
 			foreach (var typeEntries in Entries ?? [])
 			{
 				var typeTree = new Dictionary<string, List<PackageEntry>>();
@@ -395,35 +382,12 @@ namespace ValvePak
 					}
 
 					directoryEntries.Add(entry);
-
-					if (entry.ArchiveIndex != 0x7FFF)
-					{
-						continue;
-					}
-
-					fileDataSectionSize += entry.TotalLength;
-
-					if (fileDataSectionSize > int.MaxValue)
-					{
-						throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
-					}
 				}
 			}
 
-			// Header
-			writer.Write(MAGIC);
-			writer.Write(Version);
-			writer.Write(0); // TreeSize, to be updated later
-
-			if (Version >= 2)
-			{
-				writer.Write(0); // FileDataSectionSize, to be updated later
-				writer.Write(0); // ArchiveMD5SectionSize, to be updated later
-				writer.Write(48); // OtherMD5SectionSize
-				writer.Write(0); // SignatureSectionSize
-			}
-
-			var headerSize = (int)(stream.Position - streamOffset);
+			// The file tree is built in memory first, so that the header can be written with its size and the tree can be hashed
+			using var treeStream = new MemoryStream();
+			using var writer = new BinaryWriter(treeStream);
 
 			// Entries with data in the directory file, in tree order, which is the order their data offsets are assigned in
 			var embeddedEntries = new List<PackageEntry>();
@@ -431,7 +395,6 @@ namespace ValvePak
 
 			const byte NullByte = 0;
 
-			// File tree data
 			foreach (var typeEntries in tree)
 			{
 				writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
@@ -451,6 +414,11 @@ namespace ValvePak
 
 						if (entry.ArchiveIndex == 0x7FFF)
 						{
+							if ((ulong)embeddedDataOffset + fileLength > int.MaxValue)
+							{
+								throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
+							}
+
 							fileOffset = embeddedDataOffset;
 							embeddedDataOffset += fileLength;
 							embeddedEntries.Add(entry);
@@ -474,99 +442,61 @@ namespace ValvePak
 
 			writer.Write(NullByte);
 
-			var fileTreeSize = stream.Position - streamOffset - headerSize;
-
-			foreach (var entry in embeddedEntries)
-			{
-				writer.Write(GetEntryData(entry));
-			}
-
-			var afterFileData = stream.Position;
-			var fileDataSize = afterFileData - streamOffset - headerSize - fileTreeSize;
+			var treeData = treeStream.GetBuffer().AsSpan(0, (int)treeStream.Length);
 
 			// Archive MD5 section, contains hashes of chunk files
-			var chunkHashFractions = new List<ChunkHashFraction>();
+			var chunkHashFractions = new List<ChunkHashFraction>(FinishedChunkHashFractions);
 
-			if (Version >= 2)
+			if (CurrentChunkFile != null)
 			{
-				chunkHashFractions.AddRange(FinishedChunkHashFractions);
-
-				if (CurrentChunkFile != null)
-				{
-					chunkHashFractions.AddRange(CurrentChunkFile.GetHashFractions());
-				}
+				chunkHashFractions.AddRange(CurrentChunkFile.GetHashFractions());
 			}
 
 			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions);
-			writer.Write(archiveMd5SectionBytes);
 
-			var hashedLength = stream.Position - streamOffset;
+			using var headerStream = new MemoryStream();
+			using var headerWriter = new BinaryWriter(headerStream);
+			headerWriter.Write(MAGIC);
+			headerWriter.Write(Version);
+			headerWriter.Write(treeData.Length); // TreeSize
 
-			// Set tree size
-			// TODO: It is possible to precalculate these sizes to remove seeking
-			stream.Seek(streamOffset + (2 * sizeof(int)), SeekOrigin.Begin);
-			writer.Write((int)fileTreeSize);
+			if (Version >= 2)
+			{
+				headerWriter.Write(embeddedDataOffset); // FileDataSectionSize
+				headerWriter.Write(archiveMd5SectionBytes.Length); // ArchiveMD5SectionSize
+				headerWriter.Write(48); // OtherMD5SectionSize
+				headerWriter.Write(0); // SignatureSectionSize
+			}
+
+			var header = headerStream.GetBuffer().AsSpan(0, (int)headerStream.Length);
+
+			using var fullFileMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+
+			void WriteAndHash(ReadOnlySpan<byte> data)
+			{
+				stream.Write(data);
+				fullFileMD5.AppendData(data);
+			}
+
+			WriteAndHash(header);
+			WriteAndHash(treeData);
+
+			foreach (var entry in embeddedEntries)
+			{
+				WriteAndHash(GetEntryData(entry));
+			}
 
 			if (Version < 2)
 			{
 				// Version 1 has no checksums
-				stream.Seek(afterFileData, SeekOrigin.Begin);
 				return;
 			}
 
-			writer.Write((int)fileDataSize);
-			writer.Write(archiveMd5SectionBytes.Length); // ArchiveMD5SectionSize
+			WriteAndHash(archiveMd5SectionBytes);
+			WriteAndHash(MD5.HashData(treeData));
+			WriteAndHash(MD5.HashData(archiveMd5SectionBytes));
 
-			// Calculate file hashes
-			stream.Seek(streamOffset, SeekOrigin.Begin);
-
-			var buffer = ArrayPool<byte>.Shared.Rent(4096);
-
-			try
-			{
-				// TODO: It is possible to transform these hashes while writing the file to remove seeking and stream reading
-				using var fileTreeMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-				using var fullFileMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-
-				// The file tree is also hashed on its own
-				HashStreamRange(stream, buffer, headerSize, fullFileMD5, null);
-				HashStreamRange(stream, buffer, fileTreeSize, fullFileMD5, fileTreeMD5);
-				HashStreamRange(stream, buffer, hashedLength - headerSize - fileTreeSize, fullFileMD5, null);
-
-				// File tree hash
-				var treeHash = fileTreeMD5.GetHashAndReset();
-				writer.Write(treeHash);
-				fullFileMD5.AppendData(treeHash);
-
-				// Archive MD5 section hash
-				var fileHashesMD5 = MD5.HashData(archiveMd5SectionBytes);
-				writer.Write(fileHashesMD5);
-				fullFileMD5.AppendData(fileHashesMD5);
-
-				// Full file hash
-				writer.Write(fullFileMD5.GetHashAndReset());
-			}
-			finally
-			{
-				ArrayPool<byte>.Shared.Return(buffer);
-			}
-		}
-
-		/// <summary>
-		/// Reads the given number of bytes from the stream and adds them to the hashes.
-		/// </summary>
-		private static void HashStreamRange(Stream stream, byte[] buffer, long length, IncrementalHash hash, IncrementalHash? secondHash)
-		{
-			while (length > 0)
-			{
-				var count = (int)Math.Min(buffer.Length, length);
-				stream.ReadExactly(buffer, 0, count);
-
-				hash.AppendData(buffer, 0, count);
-				secondHash?.AppendData(buffer, 0, count);
-
-				length -= count;
-			}
+			stream.Write(fullFileMD5.GetHashAndReset());
 		}
 
 		/// <summary>
