@@ -171,8 +171,7 @@ namespace ValvePak
 		{
 			Debug.Assert(Reader != null);
 
-			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
-			var typeEntries = new Dictionary<string, List<PackageEntry>>(stringComparer);
+			var typeEntries = CreateEntriesDictionary();
 			using var ms = new MemoryStream();
 
 			// Types

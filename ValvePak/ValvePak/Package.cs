@@ -160,6 +160,13 @@ namespace ValvePak
 			}
 		}
 
+		private Dictionary<string, List<PackageEntry>> CreateEntriesDictionary()
+		{
+			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
+
+			return new Dictionary<string, List<PackageEntry>>(stringComparer);
+		}
+
 		/// <summary>
 		/// Sets the file name.
 		/// </summary>

@@ -138,11 +138,7 @@ namespace ValvePak
 				ArchiveIndex = archiveIndex,
 			};
 
-			if (Entries == null)
-			{
-				var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
-				Entries = new Dictionary<string, List<PackageEntry>>(stringComparer);
-			}
+			Entries ??= CreateEntriesDictionary();
 
 			if (!Entries.TryGetValue(extension, out var typeEntries))
 			{
@@ -150,7 +146,15 @@ namespace ValvePak
 				Entries[extension] = typeEntries;
 			}
 
-			typeEntries.Add(entry);
+			if (Comparer == null)
+			{
+				typeEntries.Add(entry);
+			}
+			else
+			{
+				var index = typeEntries.BinarySearch(entry, Comparer);
+				typeEntries.Insert(index < 0 ? ~index : index, entry);
+			}
 
 			return entry;
 		}
