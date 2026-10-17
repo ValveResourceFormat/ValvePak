@@ -554,6 +554,21 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		public async Task ThrowsWhenReadTwice()
+		{
+			var path = Path.Combine(AppContext.BaseDirectory, "Files", "test_single.vpk");
+
+			using var package = new Package();
+			package.Read(path);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(() => package.Read(path)).ThrowsExactly<InvalidOperationException>();
+				await Assert.That(() => package.SetFileName(path)).ThrowsExactly<InvalidOperationException>();
+			}
+		}
+
+		[Test]
 		public async Task VerifyHashesThrowsOnVersion1()
 		{
 			using var package = new Package();

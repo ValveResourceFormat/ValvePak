@@ -165,6 +165,14 @@ namespace ValvePak
 			}
 		}
 
+		private void ThrowIfAlreadyRead()
+		{
+			if (Reader != null)
+			{
+				throw new InvalidOperationException("This package has already been read, create a new instance to read another package.");
+			}
+		}
+
 		private Dictionary<string, List<PackageEntry>> CreateEntriesDictionary()
 		{
 			var stringComparer = Comparer == null ? null : StringComparer.FromComparison(Comparer.Comparison);
@@ -173,19 +181,16 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Sets the file name.
+		/// Sets the file name. This must be called before the package is read.
 		/// </summary>
 		/// <param name="fileName">Filename.</param>
 		public void SetFileName(string fileName)
 		{
 			ArgumentNullException.ThrowIfNull(fileName);
+			ThrowIfAlreadyRead();
 
 			FileName = StripDirVpkSuffixes(fileName, out var isDirVpk);
-
-			if (isDirVpk)
-			{
-				IsDirVPK = true;
-			}
+			IsDirVPK = isDirVpk;
 		}
 
 		/// <summary>

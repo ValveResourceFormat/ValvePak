@@ -32,11 +32,16 @@ namespace ValvePak
 
 		/// <summary>
 		/// Reads the given <see cref="Stream"/>.
+		/// A package can only be read once.
+		///
+		/// The stream must stay open while the package is used, entry data is read from it on demand.
+		/// It is disposed together with the package.
 		/// </summary>
 		/// <param name="input">The input <see cref="Stream"/> to read from.</param>
 		public void Read(Stream input)
 		{
 			ArgumentNullException.ThrowIfNull(input);
+			ThrowIfAlreadyRead();
 
 			if (FileName == null)
 			{
