@@ -34,13 +34,13 @@ namespace ValvePak.Test
 			using (var package = new Package())
 			{
 				package.SetFileName(dirPath);
-				package.WriteChunkSize = 1024;
+				package.WriteChunkSize = 800;
 
 				for (var i = 0; i < 10; i++)
 				{
 					var entry = package.AddFile($"files/chunked_{i}.bin", CreateTestData(400, (byte)i), multiChunk: true);
 
-					// 400 byte files with a 1024 chunk size, so three files per chunk
+					// 400 byte files with an 800 byte chunk size: a chunk file at exactly 800 bytes is not full yet, so each one holds three files
 					await Assert.That(entry.ArchiveIndex).IsEqualTo((ushort)(i / 3));
 				}
 
@@ -274,17 +274,17 @@ namespace ValvePak.Test
 			package.SetFileName(TempPath("limit_dir.vpk"));
 			package.WriteChunkSize = 1;
 
-			// With a chunk size of 1 every file starts a new chunk
+			// With a chunk size of 1 every file of 2 bytes starts a new chunk
 			PackageEntry? entry = null;
 
 			for (var i = 0; i < 0x7FFF; i++)
 			{
-				entry = package.AddFile($"{i}.bin", [1], multiChunk: true);
+				entry = package.AddFile($"{i}.bin", [1, 2], multiChunk: true);
 			}
 
 			await Assert.That(entry!.ArchiveIndex).IsEqualTo((ushort)0x7FFE);
 
-			await Assert.That(() => package.AddFile("one too many.bin", [1], multiChunk: true)).ThrowsExactly<InvalidOperationException>()
+			await Assert.That(() => package.AddFile("one too many.bin", [1, 2], multiChunk: true)).ThrowsExactly<InvalidOperationException>()
 				.WithMessageContaining("maximum amount of chunk files", StringComparison.Ordinal);
 		}
 
@@ -492,7 +492,7 @@ namespace ValvePak.Test
 		public async Task WriteChunkSizeValidation()
 		{
 			using var package = new Package();
-			await Assert.That(package.WriteChunkSize).IsEqualTo(200 * 1024 * 1024);
+			await Assert.That(package.WriteChunkSize).IsEqualTo(100 * 1024 * 1024);
 			await Assert.That(() => package.WriteChunkSize = 0).ThrowsExactly<ArgumentOutOfRangeException>();
 			await Assert.That(() => package.WriteChunkSize = -1).ThrowsExactly<ArgumentOutOfRangeException>();
 		}
