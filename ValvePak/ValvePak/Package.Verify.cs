@@ -96,7 +96,7 @@ namespace ValvePak
 		/// </summary>
 		private byte[] HashPackageRange(long offset, long length, HashAlgorithmName hashAlgorithm)
 		{
-			var archive = GetArchive(0x7FFF);
+			var archive = GetArchive(DirectoryArchiveIndex);
 			var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(length, ChunkHashBufferSize));
 
 			try

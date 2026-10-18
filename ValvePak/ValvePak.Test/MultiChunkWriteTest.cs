@@ -1,8 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using TUnit.Assertions.Enums;
@@ -115,8 +115,8 @@ namespace ValvePak.Test
 				await Assert.That(readBack.AccessPackFileHashes[0].ArchiveIndex).IsZero();
 				await Assert.That(readBack.AccessPackFileHashes[0].Offset).IsZero();
 				await Assert.That(readBack.AccessPackFileHashes[0].Length).IsEqualTo((uint)FractionSize);
-				await Assert.That(readBack.AccessPackFileHashes[0].HashType).IsEqualTo(EHashType.MD5);
-				await Assert.That(readBack.AccessPackFileHashes[0].Checksum).IsEquivalentTo(MD5.HashData(fileA.AsSpan(0, FractionSize)), CollectionOrdering.Matching);
+				await Assert.That(readBack.AccessPackFileHashes[0].HashType).IsEqualTo(EHashType.Blake3);
+				await Assert.That(readBack.AccessPackFileHashes[0].Checksum).IsEquivalentTo(HashBlake3(fileA.AsSpan(0, FractionSize)), CollectionOrdering.Matching);
 
 				await Assert.That(readBack.AccessPackFileHashes[1].ArchiveIndex).IsZero();
 				await Assert.That(readBack.AccessPackFileHashes[1].Offset).IsEqualTo((uint)FractionSize);
@@ -164,11 +164,11 @@ namespace ValvePak.Test
 			{
 				await Assert.That(readBack.AccessPackFileHashes[0].Offset).IsZero();
 				await Assert.That(readBack.AccessPackFileHashes[0].Length).IsEqualTo((uint)FractionSize);
-				await Assert.That(readBack.AccessPackFileHashes[0].Checksum).IsEquivalentTo(MD5.HashData(fraction0), CollectionOrdering.Matching);
+				await Assert.That(readBack.AccessPackFileHashes[0].Checksum).IsEquivalentTo(HashBlake3(fraction0), CollectionOrdering.Matching);
 
 				await Assert.That(readBack.AccessPackFileHashes[1].Offset).IsEqualTo((uint)FractionSize);
 				await Assert.That(readBack.AccessPackFileHashes[1].Length).IsEqualTo((uint)(fileA.Length + fileB.Length - FractionSize));
-				await Assert.That(readBack.AccessPackFileHashes[1].Checksum).IsEquivalentTo(MD5.HashData(fileB.AsSpan(FractionSize - fileA.Length)), CollectionOrdering.Matching);
+				await Assert.That(readBack.AccessPackFileHashes[1].Checksum).IsEquivalentTo(HashBlake3(fileB.AsSpan(FractionSize - fileA.Length)), CollectionOrdering.Matching);
 			}
 
 			await AssertPackageVerifies(readBack);
@@ -609,7 +609,7 @@ namespace ValvePak.Test
 				await AssertEntryData(readBack, "added/embedded.bin", 300, 2);
 				await Assert.That(readBack.FindEntry("steammessages_base.proto")!.SmallData).Count().IsEqualTo(preload.Length);
 
-				// The read chunk file had no hashes
+				// The read chunk file had no hashes, and data in the directory file is not hashed when there are chunk files
 				await Assert.That(readBack.AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex).ToArray()).IsEquivalentTo(new ushort[] { 2, 4 }, CollectionOrdering.Matching);
 			}
 
@@ -635,6 +635,7 @@ namespace ValvePak.Test
 
 				// The package reads from the written file, where the data of every entry has moved
 				await AssertPackageVerifies(package);
+				await Assert.That(package.FindEntry("lorem.txt")!.SmallData).Count().IsEqualTo(56);
 
 				package.Write(path);
 			}
@@ -647,6 +648,7 @@ namespace ValvePak.Test
 			await AssertPackageVerifies(readBack);
 			await AssertEntryData(readBack, "added.bin", 300, 2);
 			await AssertEntryData(readBack, "chunked.bin", 500, 3);
+			await Assert.That(readBack.FindEntry("lorem.txt")!.SmallData).Count().IsEqualTo(56);
 		}
 
 		[Test]
@@ -794,10 +796,7 @@ namespace ValvePak.Test
 				package.Write(TempPath("test.vpk"), repack: true);
 			}
 
-			foreach (var (path, data) in originalFiles)
-			{
-				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
-			}
+			await AssertFilesUnchanged(originalFiles);
 
 			// Deleting stops at the first chunk file that does not exist
 			await Assert.That(File.Exists(TempPath("copy_001.vpk"))).IsFalse();
@@ -822,10 +821,7 @@ namespace ValvePak.Test
 
 			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
 
-			foreach (var (path, data) in originalFiles)
-			{
-				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
-			}
+			await AssertFilesUnchanged(originalFiles);
 
 			// The package still reads the original files, and can be repacked once they can be replaced
 			await AssertPackageVerifies(package);
@@ -847,11 +843,7 @@ namespace ValvePak.Test
 			await Assert.That(() => package.Write(TempPath("test.vpk"), repack: true)).ThrowsExactly<InvalidOperationException>();
 			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
 
-			foreach (var (path, data) in originalFiles)
-			{
-				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
-			}
-
+			await AssertFilesUnchanged(originalFiles);
 			await AssertPackageVerifies(package);
 		}
 
@@ -868,6 +860,14 @@ namespace ValvePak.Test
 			}
 
 			return TempPath(fileNames[0]);
+		}
+
+		private static async Task AssertFilesUnchanged(Dictionary<string, byte[]> originalFiles)
+		{
+			foreach (var (path, data) in originalFiles)
+			{
+				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
+			}
 		}
 
 		private static MemoryStream ReadFromMemory(Package package, string dirPath)
@@ -890,6 +890,17 @@ namespace ValvePak.Test
 			using var readBack = new Package();
 			readBack.Read(dirPath);
 			readBack.VerifyChunkHashes();
+		}
+
+		private static byte[] HashBlake3(ReadOnlySpan<byte> data)
+		{
+			using var hasher = Blake3.Hasher.New();
+			hasher.Update(data);
+
+			var hash = new byte[16];
+			hasher.Finalize(hash);
+
+			return hash;
 		}
 
 		private static async Task AssertPackageVerifies(Package package)

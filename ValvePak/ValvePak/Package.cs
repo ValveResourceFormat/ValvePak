@@ -22,6 +22,11 @@ namespace ValvePak
 		internal const string DirectorySeparator = "/";
 
 		/// <summary>
+		/// Archive index of entries whose data is in the directory file instead of a chunk file.
+		/// </summary>
+		internal const ushort DirectoryArchiveIndex = 0x7FFF;
+
+		/// <summary>
 		/// Always '/' as per Valve's vpk implementation.
 		/// </summary>
 		public const char DirectorySeparatorChar = '/';
@@ -230,7 +235,7 @@ namespace ValvePak
 			ArgumentNullException.ThrowIfNull(fileName);
 			ThrowIfAlreadyRead();
 
-			if (ChunkBaseName != null)
+			if (HighestChunkIndex >= 0)
 			{
 				throw new InvalidOperationException("The file name can not be changed after files were added to chunk files.");
 			}

@@ -70,6 +70,11 @@ namespace ValvePak
 		public byte[] SmallData { get; set; } = [];
 
 		/// <summary>
+		/// Gets or sets the data of an added file that is written into the directory file and is not stored in an archive yet.
+		/// </summary>
+		internal byte[]? PendingData { get; set; }
+
+		/// <summary>
 		/// Returns the file name and extension.
 		/// </summary>
 		/// <returns>File name and extension.</returns>

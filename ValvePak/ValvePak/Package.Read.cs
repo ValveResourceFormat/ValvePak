@@ -61,12 +61,15 @@ namespace ValvePak
 			ReadSections();
 
 			IsReadPackage = true;
-			HighestChunkIndex = GetAllEntries()
-				.Where(static entry => entry.Length > 0)
-				.Select(static entry => entry.ArchiveIndex)
+			HighestChunkIndex = GetChunkIndicesWithData()
 				.Concat(AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex))
-				.Where(static archiveIndex => archiveIndex != 0x7FFF)
+				.Where(static archiveIndex => archiveIndex < DirectoryArchiveIndex)
 				.Max(static archiveIndex => (int?)archiveIndex) ?? -1;
+
+			if (HighestChunkIndex >= 0)
+			{
+				ChunkBaseName = Path.GetFullPath(FileName);
+			}
 		}
 
 		/// <summary>
@@ -138,11 +141,11 @@ namespace ValvePak
 			// Taking the handle flushes the stream's buffer, so it is done here before any other thread can read from the stream
 			if (input is FileStream fileStream)
 			{
-				Archives[0x7FFF] = new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset);
+				Archives[DirectoryArchiveIndex] = new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset);
 			}
 			else
 			{
-				Archives[0x7FFF] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
+				Archives[DirectoryArchiveIndex] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
 			}
 		}
 
@@ -202,7 +205,11 @@ namespace ValvePak
 				entry.SmallData.CopyTo(output, 0);
 			}
 
-			if (entry.Length > 0)
+			if (entry.PendingData != null)
+			{
+				entry.PendingData.CopyTo(output, entry.SmallData.Length);
+			}
+			else if (entry.Length > 0)
 			{
 				var length = (int)entry.Length;
 				var bytesRead = ReadArchiveData(entry.ArchiveIndex, entry.Offset, output.AsSpan(entry.SmallData.Length, length));
@@ -399,7 +406,7 @@ namespace ValvePak
 
 				if (hashFraction.ArchiveIndex == 0 && hashFraction.HashType == (EHashType)0x8000)
 				{
-					hashFraction.ArchiveIndex = 0x7FFF;
+					hashFraction.ArchiveIndex = DirectoryArchiveIndex;
 					hashFraction.HashType = EHashType.MD5;
 				}
 
@@ -486,7 +493,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Returns the archive for the given index, opening its chunk file on first use.
-		/// The embedded archive (0x7FFF) is added when the directory file is read.
+		/// The embedded archive (<see cref="DirectoryArchiveIndex"/>) is added when the directory file is read.
 		/// </summary>
 		private Archive GetArchive(ushort archiveIndex)
 		{
@@ -504,7 +511,7 @@ namespace ValvePak
 					return archive;
 				}
 
-				if (archiveIndex == 0x7FFF)
+				if (archiveIndex == DirectoryArchiveIndex)
 				{
 					ThrowIfDirectoryFileClosed();
 				}
@@ -554,7 +561,7 @@ namespace ValvePak
 
 		private void CloseDirectoryFile()
 		{
-			CloseArchive(0x7FFF);
+			CloseArchive(DirectoryArchiveIndex);
 			Reader?.Dispose();
 			Reader = null;
 		}
@@ -581,7 +588,7 @@ namespace ValvePak
 			ArgumentNullException.ThrowIfNull(entry);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			if (entry.Length > 4096 && entry.SmallData.Length == 0)
+			if (entry.Length > 4096 && entry.SmallData.Length == 0 && entry.PendingData == null)
 			{
 				var archive = GetArchive(entry.ArchiveIndex);
 				var stream = archive.OpenMappedStream(archive.DataOffset + entry.Offset, entry.Length);
