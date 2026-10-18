@@ -587,7 +587,7 @@ namespace ValvePak
 		///
 		/// Each archive is mapped once.
 		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>
-		/// once the package is disposed, or once <see cref="Write(string)"/> replaces the file they read from.
+		/// once the package is disposed, once <see cref="Write(string, bool)"/> replaces the file they read from, or once it repacks, which closes all files the package read from.
 		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>

@@ -651,6 +651,128 @@ namespace ValvePak.Test
 			}
 		}
 
+		[Test]
+		public async Task RepackDropsDataOfRemovedFiles()
+		{
+			var dirPath = TempPath("repack_dir.vpk");
+
+			using (var package = new Package())
+			{
+				package.SetFileName(dirPath);
+				package.WriteChunkSize = 1000;
+
+				for (var i = 0; i < 9; i++)
+				{
+					package.AddFile($"file_{i}.bin", CreateTestData(400, (byte)i), multiChunk: true);
+				}
+
+				package.AddFile("in_dir.bin", CreateTestData(300, 9));
+				package.Write(dirPath);
+
+				foreach (var i in new[] { 0, 1, 3, 4, 5, 7, 8 })
+				{
+					package.RemoveFile(package.FindEntry($"file_{i}.bin")!);
+				}
+
+				package.AddFile("last.bin", CreateTestData(100, 9), multiChunk: true);
+				package.Write(dirPath, repack: true);
+
+				var next = package.AddFile("next.bin", CreateTestData(400, 8), multiChunk: true);
+				await Assert.That(next.ArchiveIndex).IsEqualTo((ushort)1);
+
+				package.Write(dirPath);
+			}
+
+			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(3);
+			File.SetAttributes(TempPath("repack_000.vpk"), FileAttributes.ReadOnly);
+			File.SetAttributes(TempPath("repack_001.vpk"), FileAttributes.ReadOnly);
+
+			using (var package = new Package())
+			{
+				package.Read(dirPath);
+				package.RemoveFile(package.FindEntry("file_2.bin")!);
+				package.Write(dirPath, repack: true);
+
+				// The package now reads from the repacked files
+				await AssertPackageVerifies(package);
+				await AssertEntryData(package, "in_dir.bin", 300, 9);
+			}
+
+			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(2);
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+
+			// Data is written in directory tree order
+			await Assert.That((await AssertEntryData(readBack, "file_6.bin", 400, 6)).Offset).IsZero();
+			await Assert.That((await AssertEntryData(readBack, "next.bin", 400, 8)).Offset).IsEqualTo(500u);
+		}
+
+		[Test]
+		public async Task RepackWritesToNewBaseName()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalFiles = Directory.GetFiles(TempDirectory).ToDictionary(static path => path, File.ReadAllBytes);
+			var newPath = TempPath("copy_dir.vpk");
+			await File.WriteAllTextAsync(TempPath("copy_001.vpk"), "stale");
+			await File.WriteAllTextAsync(TempPath("copy_003.vpk"), "stale");
+
+			using (var package = new Package())
+			{
+				package.Read(dirPath);
+				package.Write(newPath, repack: true);
+
+				await Assert.That(package.FileName).IsEqualTo(TempPath("copy"));
+				await Assert.That(() => package.Write(dirPath)).ThrowsExactly<InvalidOperationException>();
+				await AssertPackageVerifies(package);
+			}
+
+			// A package without chunk files leaves the chunk files of another package with the same name alone
+			using (var package = new Package())
+			{
+				package.AddFile("a.bin", CreateTestData(10, 1));
+				package.Write(TempPath("test.vpk"), repack: true);
+			}
+
+			foreach (var (path, data) in originalFiles)
+			{
+				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
+			}
+
+			// Deleting stops at the first chunk file that does not exist
+			await Assert.That(File.Exists(TempPath("copy_001.vpk"))).IsFalse();
+			await Assert.That(File.Exists(TempPath("copy_003.vpk"))).IsTrue();
+		}
+
+		[Test]
+		[RunOn(OS.Windows)]
+		public async Task RepackKeepsAllFilesWhenOneCanNotBeReplaced()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalFiles = Directory.GetFiles(TempDirectory).ToDictionary(static path => path, File.ReadAllBytes);
+
+			using var package = new Package();
+			package.Read(dirPath);
+			package.RemoveFile(package.FindEntry("kitten.jpg")!);
+
+			// The chunk file is replaced before the directory file, which can not be
+			File.SetAttributes(dirPath, FileAttributes.ReadOnly);
+			await Assert.That(() => package.Write(dirPath, repack: true)).ThrowsExactly<UnauthorizedAccessException>();
+			File.SetAttributes(dirPath, FileAttributes.Normal);
+
+			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
+
+			foreach (var (path, data) in originalFiles)
+			{
+				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(data, CollectionOrdering.Matching);
+			}
+
+			// The package still reads the original files, and can be repacked once they can be replaced
+			await AssertPackageVerifies(package);
+			package.Write(dirPath, repack: true);
+			await AssertPackageVerifies(package);
+		}
+
 		private string TempPath(string fileName)
 		{
 			return Path.Combine(TempDirectory, fileName);

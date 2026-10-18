@@ -12,9 +12,9 @@ namespace ValvePak
 	public partial class Package
 	{
 		/// <summary>
-		/// Gets or sets the size in bytes of chunk files created when adding files with multi chunk enabled,
-		/// see <see cref="AddFile(string, byte[], bool)"/>. A new chunk file is started once the current one is larger than this size,
-		/// so a chunk file can end past it by up to the size of its last file.
+		/// Gets or sets the size in bytes after which files added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>)
+		/// or repacked (see <see cref="Write(string, bool)"/>) go into a new chunk file.
+		/// A new chunk file is started once the current one is larger than this size, so a chunk file can end past it by up to the size of its last file.
 		/// Defaults to 100 MiB.
 		/// </summary>
 		public int WriteChunkSize
@@ -415,17 +415,22 @@ namespace ValvePak
 		///
 		/// If the package has chunk files, from being read or from files added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>),
 		/// this only writes the directory file, which refers to the data where it is in the chunk files.
-		/// It must be written to the path the chunk files are named after, which should end with "_dir.vpk".
+		/// Unless <paramref name="repack"/> is enabled, it must be written to the path the chunk files are named after, which should end with "_dir.vpk".
 		/// Hashes of chunk files are kept if they cover the whole file, computed again otherwise, and left out for chunk files that had none.
 		///
-		/// Writing over the file the package was read from writes a temporary file that replaces it once it was written,
-		/// and the package reads from the written file afterwards. This must not run concurrently with reads from this package,
-		/// and streams from <see cref="GetMemoryMappedStreamIfPossible"/> of the replaced file can no longer be read. Any other file is written in place.
+		/// Writing over the file the package was read from, or repacking, writes temporary files that replace the existing files once all were written,
+		/// and the package reads from the written files afterwards. This must not run concurrently with reads from this package,
+		/// and streams from <see cref="GetMemoryMappedStreamIfPossible"/> can no longer be read once they read from a replaced file, or from any file after repacking.
+		/// Any other file is written in place.
 		///
 		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		/// </summary>
 		/// <param name="filename">The file to open and write.</param>
-		public void Write(string filename)
+		/// <param name="repack">If true, the data in chunk files is copied into new chunk files named after <paramref name="filename"/> in directory tree order,
+		/// which drops the data of removed and replaced files. Either all existing files are replaced or none are.
+		/// If new chunk files were written or the package had chunk files with that name, existing chunk files numbered after the new ones are then deleted where possible
+		/// until a number has no file, and in the latter case also up to the highest number the package had.</param>
+		public void Write(string filename, bool repack = false)
 		{
 			ArgumentNullException.ThrowIfNull(filename);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
@@ -438,45 +443,78 @@ namespace ValvePak
 				throw new InvalidOperationException("This package was read from inside a larger file, which can not be written over.");
 			}
 
-			if (HighestChunkIndex >= 0)
-			{
-				var chunkBaseName = GetChunkBaseName();
+			var baseName = StripDirVpkSuffixes(fullPath, out var isDirVpk);
+			var writesOverChunkFiles = HighestChunkIndex >= 0 && PathsEqual(baseName, GetChunkBaseName());
 
-				// Readers find chunk files by appending "_###.vpk" to the directory file name without the "_dir.vpk" suffix
-				if (!PathsEqual(StripDirVpkSuffixes(fullPath, out _), chunkBaseName))
-				{
-					throw new InvalidOperationException($"This package has chunk files named after '{chunkBaseName}_dir.vpk', the directory file must be written to that path so that they can be found.");
-				}
+			// Readers find chunk files by appending "_###.vpk" to the directory file name without the "_dir.vpk" suffix
+			if (!repack && HighestChunkIndex >= 0 && !writesOverChunkFiles)
+			{
+				throw new InvalidOperationException($"This package has chunk files named after '{GetChunkBaseName()}_dir.vpk', the directory file must be written to that path so that they can be found, or be written with repack enabled.");
 			}
 
 			var entries = GetEntriesInTreeOrder();
-			var chunkHashFractions = GetChunkHashFractions();
 
-			if (!replacesReadFile)
+			if (!replacesReadFile && !repack)
 			{
+				var chunkHashFractions = GetChunkHashFractions();
+
 				using var output = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
-				WriteDirectoryFile(output, entries, chunkHashFractions);
+				WriteDirectoryFile(output, entries, chunkHashFractions, chunkLocations: []);
 				output.SetLength(output.Position);
 
 				return;
 			}
 
-			var temporaryPath = $"{fullPath}.{Path.GetRandomFileName()}.tmp";
+			var token = Path.GetRandomFileName();
+			var replacements = new List<(string TemporaryPath, string Path)>();
 
 			try
 			{
-				using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+				var chunkLocations = new Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)>();
+				List<ChunkHashFraction>? chunkHashFractions;
+
+				if (repack)
 				{
-					WriteDirectoryFile(stream, entries, chunkHashFractions);
+					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, token, replacements);
+				}
+				else
+				{
+					chunkHashFractions = GetChunkHashFractions();
 				}
 
-				CloseDirectoryFile();
+				var chunkFileCount = replacements.Count;
+				var temporaryPath = $"{fullPath}.{token}.tmp";
+				replacements.Add((temporaryPath, fullPath));
+
+				using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+				{
+					WriteDirectoryFile(stream, entries, chunkHashFractions, chunkLocations);
+				}
+
+				var readsWrittenFile = replacesReadFile || (repack && Reader != null);
+
+				if (repack)
+				{
+					FinishCurrentChunkFile();
+
+					foreach (var archiveIndex in Archives.Keys.Where(static archiveIndex => archiveIndex != 0x7FFF))
+					{
+						CloseArchive(archiveIndex);
+					}
+				}
+
+				if (replacesReadFile)
+				{
+					CloseDirectoryFile();
+				}
+
+				List<string> backupPaths;
 
 				try
 				{
-					File.Move(temporaryPath, fullPath, overwrite: true);
+					backupPaths = ReplaceFiles(replacements, token);
 				}
-				catch (Exception exception)
+				catch (Exception exception) when (replacesReadFile)
 				{
 					try
 					{
@@ -490,12 +528,178 @@ namespace ValvePak
 					throw;
 				}
 
-				ReopenWrittenDirectoryFile(fullPath, entries);
+				if (repack)
+				{
+					var staleHighestIndex = writesOverChunkFiles ? HighestChunkIndex : -1;
+
+					foreach (var (entry, (archiveIndex, offset)) in chunkLocations)
+					{
+						entry.ArchiveIndex = archiveIndex;
+						entry.Offset = offset;
+					}
+
+					FileName = baseName;
+					ChunkBaseName = baseName;
+					IsDirVPK = isDirVpk;
+					HighestChunkIndex = chunkFileCount - 1;
+					UpdatedChunkHashFractions.Clear();
+
+					foreach (var fractions in (chunkHashFractions ?? []).GroupBy(static fraction => fraction.ArchiveIndex))
+					{
+						UpdatedChunkHashFractions[fractions.Key] = [.. fractions];
+					}
+
+					backupPaths.ForEach(TryDeleteFile);
+
+					if (chunkFileCount > 0 || writesOverChunkFiles)
+					{
+						for (var i = chunkFileCount; i < 0x7FFF; i++)
+						{
+							var path = GetArchiveIndexFullFilePath(baseName, (ushort)i);
+
+							if (i > staleHighestIndex && !File.Exists(path))
+							{
+								break;
+							}
+
+							TryDeleteFile(path);
+						}
+					}
+				}
+
+				if (readsWrittenFile)
+				{
+					ReopenWrittenDirectoryFile(fullPath, entries);
+				}
 			}
 			finally
 			{
-				TryDeleteFile(temporaryPath);
+				foreach (var (temporaryPath, _) in replacements)
+				{
+					TryDeleteFile(temporaryPath);
+				}
 			}
+		}
+
+		/// <summary>
+		/// Copies the data of all entries in chunk files into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>.
+		/// </summary>
+		/// <returns>Where the data of each copied entry was written to, and the hashes of the new chunk files or null if there are none.</returns>
+		private (Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)> Locations, List<ChunkHashFraction>? HashFractions) WriteRepackedChunkFiles(
+			List<PackageEntry> entries, string baseName, string token, List<(string TemporaryPath, string Path)> replacements)
+		{
+			var locations = new Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)>();
+			var hashFractions = new List<ChunkHashFraction>();
+			ChunkFileWriter? chunkFile = null;
+
+			try
+			{
+				foreach (var entry in entries)
+				{
+					if (entry.ArchiveIndex == 0x7FFF || entry.Length == 0)
+					{
+						continue;
+					}
+
+					if (chunkFile == null || chunkFile.Length > (uint)WriteChunkSize)
+					{
+						var archiveIndex = (ushort)(chunkFile == null ? 0 : chunkFile.ArchiveIndex + 1);
+						var path = GetArchiveIndexFullFilePath(baseName, archiveIndex);
+						var temporaryPath = $"{path}.{token}.tmp";
+						var nextChunkFile = new ChunkFileWriter(archiveIndex, temporaryPath);
+						replacements.Add((temporaryPath, path));
+
+						if (chunkFile != null)
+						{
+							hashFractions.AddRange(chunkFile.GetHashFractions());
+							chunkFile.Dispose();
+						}
+
+						chunkFile = nextChunkFile;
+					}
+
+					locations[entry] = (chunkFile.ArchiveIndex, chunkFile.Length);
+					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, chunkFile.Write);
+				}
+
+				if (chunkFile == null)
+				{
+					return (locations, null);
+				}
+
+				hashFractions.AddRange(chunkFile.GetHashFractions());
+
+				return (locations, hashFractions);
+			}
+			finally
+			{
+				chunkFile?.Dispose();
+			}
+		}
+
+		/// <summary>
+		/// Moves the temporary files over their targets, of which the last is the directory file.
+		/// Existing chunk files are moved aside first and are moved back if any move fails, so that either all files are replaced or none are.
+		/// </summary>
+		/// <returns>The paths that the replaced chunk files were moved aside to.</returns>
+		private static List<string> ReplaceFiles(List<(string TemporaryPath, string Path)> replacements, string token)
+		{
+			var backups = new Dictionary<string, string>();
+			var replaced = new List<string>();
+
+			try
+			{
+				foreach (var (_, path) in replacements[..^1])
+				{
+					if (File.Exists(path))
+					{
+						var backupPath = $"{path}.{token}.bak";
+						File.Move(path, backupPath);
+						backups.Add(path, backupPath);
+					}
+				}
+
+				foreach (var (temporaryPath, path) in replacements)
+				{
+					File.Move(temporaryPath, path, overwrite: true);
+					replaced.Add(path);
+				}
+			}
+			catch (Exception exception)
+			{
+				var failures = new List<Exception> { exception };
+
+				void Undo(Action action)
+				{
+					try
+					{
+						action();
+					}
+					catch (Exception undoException) when (undoException is IOException or UnauthorizedAccessException)
+					{
+						failures.Add(undoException);
+					}
+				}
+
+				foreach (var path in replaced.Where(path => !backups.ContainsKey(path)))
+				{
+					Undo(() => File.Delete(path));
+				}
+
+				foreach (var (path, backupPath) in backups)
+				{
+					Undo(() => File.Move(backupPath, path, overwrite: true));
+				}
+
+				if (failures.Count > 1)
+				{
+					throw new AggregateException(failures);
+				}
+
+				throw;
+			}
+
+			return [.. backups.Values];
 		}
 
 		private static void TryDeleteFile(string path)
@@ -520,7 +724,8 @@ namespace ValvePak
 		///
 		/// If the package has chunk files, from being read or from files added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>),
 		/// this only writes the directory file. Readers find the chunk files next to the directory file by name,
-		/// so the written data should end up at the path they are named after, which is the path the package was read from or given to <see cref="SetFileName(string)"/>.
+		/// so the written data should end up at the path they are named after, which is the path the package was read from, given to <see cref="SetFileName(string)"/>,
+		/// or last repacked to with <see cref="Write(string, bool)"/>.
 		///
 		/// The VPK version that is written is controlled by <see cref="Version"/>.
 		///
@@ -537,7 +742,7 @@ namespace ValvePak
 				throw new InvalidOperationException("This package reads from the given stream or file, use Write(string) to write over the directory file it was read from.");
 			}
 
-			WriteDirectoryFile(stream, GetEntriesInTreeOrder(), GetChunkHashFractions());
+			WriteDirectoryFile(stream, GetEntriesInTreeOrder(), GetChunkHashFractions(), chunkLocations: []);
 		}
 
 		/// <summary>
@@ -600,7 +805,10 @@ namespace ValvePak
 			return entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
 		}
 
-		private void WriteDirectoryFile(Stream stream, List<PackageEntry> entries, List<ChunkHashFraction>? chunkHashFractions)
+		/// <summary>
+		/// Writes the directory file, with entries in chunk files where they are unless they are in <paramref name="chunkLocations"/>.
+		/// </summary>
+		private void WriteDirectoryFile(Stream stream, List<PackageEntry> entries, List<ChunkHashFraction>? chunkHashFractions, Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)> chunkLocations)
 		{
 			// The file tree is built in memory first, so that the header can be written with its size and the tree can be hashed
 			using var treeStream = new MemoryStream();
@@ -624,6 +832,7 @@ namespace ValvePak
 
 					foreach (var entry in directoryEntries)
 					{
+						var archiveIndex = entry.ArchiveIndex;
 						var fileOffset = entry.Offset;
 						var fileLength = entry.Length;
 						var preloadData = entry.SmallData;
@@ -646,12 +855,16 @@ namespace ValvePak
 						{
 							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {preloadData.Length} preload bytes, the directory tree can store at most {ushort.MaxValue}.");
 						}
+						else if (chunkLocations.TryGetValue(entry, out var location))
+						{
+							(archiveIndex, fileOffset) = location;
+						}
 
 						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
 						writer.Write(NullByte);
 						writer.Write(entry.CRC32);
 						writer.Write((ushort)preloadData.Length);
-						writer.Write(entry.ArchiveIndex);
+						writer.Write(archiveIndex);
 						writer.Write(fileOffset);
 						writer.Write(fileLength);
 						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
