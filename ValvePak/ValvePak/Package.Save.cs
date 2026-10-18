@@ -50,6 +50,7 @@ namespace ValvePak
 		public bool RemoveFile(PackageEntry entry)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			if (Entries == null)
 			{
@@ -83,6 +84,7 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(entry);
 			ArgumentNullException.ThrowIfNull(newFilePath);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var (directoryName, fileName, typeName) = ParseEntryPath(newFilePath, nameof(newFilePath));
 
@@ -112,6 +114,7 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 			ArgumentNullException.ThrowIfNull(fileData);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var entry = CreateEntry(filePath, nameof(filePath));
 
@@ -145,6 +148,7 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 			ArgumentNullException.ThrowIfNull(fileData);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var entry = CreateEntry(filePath, nameof(filePath));
 
@@ -279,7 +283,7 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Creates an entry with the lowercased directory, file and type names split from the given path.
+		/// Creates an entry with the directory, file and type names split from the given path.
 		/// </summary>
 		private static PackageEntry CreateEntry(string filePath, string paramName)
 		{
@@ -338,9 +342,6 @@ namespace ValvePak
 			return (directory, fileName, extension);
 		}
 
-		/// <summary>
-		/// Lowercases only ASCII letters, the same as the game does to the paths it looks up.
-		/// </summary>
 		private static string ToLowerAscii(string value)
 		{
 			if (!value.AsSpan().ContainsAnyInRange('A', 'Z'))
@@ -395,6 +396,7 @@ namespace ValvePak
 		public void Write(string filename)
 		{
 			ArgumentNullException.ThrowIfNull(filename);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			if (CurrentChunkFile != null)
 			{
@@ -437,10 +439,11 @@ namespace ValvePak
 			}
 
 			ArgumentNullException.ThrowIfNull(stream);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
-			// Group the entries by their own type and directory, types that differ only in case share one list in a case insensitive Entries
+			// Group the entries by type and directory
 			foreach (var typeEntries in Entries ?? [])
 			{
 				foreach (var entry in typeEntries.Value)

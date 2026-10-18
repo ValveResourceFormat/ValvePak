@@ -121,6 +121,11 @@ namespace ValvePak
 		public byte[]? Signature { get; private set; }
 
 		/// <summary>
+		/// Gets whether the package has both a public key and a signature.
+		/// </summary>
+		public bool IsSigned => PublicKey != null && Signature != null;
+
+		/// <summary>
 		/// Gets the signature type.
 		/// </summary>
 		public ESignatureType SignatureType { get; private set; } = ESignatureType.Unknown;
@@ -182,6 +187,14 @@ namespace ValvePak
 			if (Reader != null)
 			{
 				throw new InvalidOperationException("This package has already been read, create a new instance to read another package.");
+			}
+		}
+
+		private void ThrowIfFilesAdded()
+		{
+			if (Reader == null && Entries != null)
+			{
+				throw new InvalidOperationException("Files were added to this package, create a new instance to read a package.");
 			}
 		}
 

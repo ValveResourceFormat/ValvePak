@@ -23,6 +23,7 @@ namespace ValvePak
 		public void Read(string filename)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
+			ThrowIfFilesAdded();
 
 			SetFileName(filename);
 
@@ -44,6 +45,7 @@ namespace ValvePak
 			ArgumentNullException.ThrowIfNull(input);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 			ThrowIfAlreadyRead();
+			ThrowIfFilesAdded();
 
 			if (FileName == null)
 			{
@@ -121,6 +123,7 @@ namespace ValvePak
 		public void ReadEntry(PackageEntry entry, out byte[] output, bool validateCrc = true)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			output = new byte[entry.TotalLength];
 
@@ -141,7 +144,7 @@ namespace ValvePak
 			ArgumentNullException.ThrowIfNull(output);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			var totalLength = (int)entry.TotalLength;
+			var totalLength = (long)entry.Length + entry.SmallData.Length;
 
 			if (output.Length < totalLength)
 			{
@@ -169,7 +172,7 @@ namespace ValvePak
 				return;
 			}
 
-			var actualChecksum = Crc32.HashToUInt32(output.AsSpan(0, totalLength));
+			var actualChecksum = Crc32.HashToUInt32(output.AsSpan(0, (int)totalLength));
 
 			if (entry.CRC32 != actualChecksum)
 			{
@@ -326,6 +329,13 @@ namespace ValvePak
 				throw new InvalidDataException($"Archive MD5 section size ({ArchiveMD5SectionSize}) is not a multiple of {ChunkHashFraction.SectionEntrySize}.");
 			}
 
+			var input = Reader.BaseStream;
+
+			if (ArchiveMD5SectionSize > input.Length - input.Position)
+			{
+				throw new InvalidDataException($"Archive MD5 section size ({ArchiveMD5SectionSize}) is larger than the rest of the file ({input.Length - input.Position}).");
+			}
+
 			var entries = (int)(ArchiveMD5SectionSize / ChunkHashFraction.SectionEntrySize);
 
 			AccessPackFileHashes = new List<ChunkHashFraction>(entries);
@@ -353,17 +363,19 @@ namespace ValvePak
 
 		private void ReadOtherMD5Section()
 		{
-			if (OtherMD5SectionSize != 48)
+			Debug.Assert(Reader != null);
+
+			if (OtherMD5SectionSize < 48)
 			{
+				Reader.BaseStream.Position += OtherMD5SectionSize;
 				return;
 			}
-
-			Debug.Assert(Reader != null);
 
 			TreeChecksum = Reader.ReadBytes(16);
 			ArchiveMD5EntriesChecksum = Reader.ReadBytes(16);
 			FileSizeBeforeWholeFileHash = (uint)(Reader.BaseStream.Position - StreamOffset);
 			WholeFileChecksum = Reader.ReadBytes(16);
+			Reader.BaseStream.Position += OtherMD5SectionSize - 48;
 		}
 
 		private void ReadSignatureSection()

@@ -525,6 +525,44 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		[Arguments(0, "File tree")]
+		[Arguments(16, "Archive MD5 entries")]
+		public async Task SectionChecksumMismatchIsReportedWhenWholeFileChecksumMatches(int checksumOffset, string sectionName)
+		{
+			var data = CreateSmallPackageBytes();
+			var otherMD5SectionOffset = GetOtherMD5SectionOffset(data);
+
+			data.AsSpan(otherMD5SectionOffset + checksumOffset, 16).Fill(0xAB);
+			MD5.HashData(data.AsSpan(0, otherMD5SectionOffset + 32)).CopyTo(data, otherMD5SectionOffset + 32);
+
+			using var package = new Package();
+			package.SetFileName("a.vpk");
+			package.Read(new MemoryStream(data));
+
+			var progress = new SynchronousProgress();
+
+			await Assert.That(() => package.VerifyHashes(progress)).ThrowsNothing();
+			await Assert.That(progress.Reports).Count().IsEqualTo(1);
+			await Assert.That(progress.Reports[0]).StartsWith($"{sectionName} checksum mismatch (", StringComparison.Ordinal);
+		}
+
+		[Test]
+		public async Task SectionChecksumMismatchThrowsWhenWholeFileChecksumMismatches()
+		{
+			var data = CreateSmallPackageBytes();
+			var otherMD5SectionOffset = GetOtherMD5SectionOffset(data);
+
+			data.AsSpan(otherMD5SectionOffset, 16).Fill(0xAB);
+
+			using var package = new Package();
+			package.SetFileName("a.vpk");
+			package.Read(new MemoryStream(data));
+
+			await Assert.That(() => package.VerifyHashes()).ThrowsExactly<InvalidDataException>()
+				.WithMessageContaining("File tree checksum mismatch", StringComparison.Ordinal);
+		}
+
+		[Test]
 		public async Task InvalidSignatureFails()
 		{
 			var path = Path.Combine(AppContext.BaseDirectory, "Files", "bad_signature.vpk");
@@ -629,7 +667,7 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task VerifyHashesThrowsOnVersion1()
+		public async Task VerifyHashesSkipsVersion1()
 		{
 			using var package = new Package();
 			package.SetFileName("a.vpk");
@@ -638,8 +676,10 @@ namespace ValvePak.Test
 			using var ms = new MemoryStream([0x34, 0x12, 0xAA, 0x55, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
 			package.Read(ms);
 
-			await Assert.That(() => package.VerifyHashes()).ThrowsExactly<InvalidDataException>()
-				.WithMessage("Only version 2 is supported.", StringComparison.Ordinal);
+			var progress = new SynchronousProgress();
+
+			await Assert.That(() => package.VerifyHashes(progress)).ThrowsNothing();
+			await Assert.That(progress.Reports).IsEquivalentTo(["Version 1 packages have no checksums to verify."]);
 		}
 
 		[Test]
@@ -870,8 +910,10 @@ namespace ValvePak.Test
 		}
 
 		private const int TreeSizeOffset = 8;
+		private const int FileDataSectionSizeOffset = 12;
 		private const int ArchiveMD5SectionSizeOffset = 16;
 		private const int SignatureSectionSizeOffset = 24;
+		private const int HeaderSize = 28;
 		private const int EmbeddedPrefixLength = 1000;
 		private const int EmbeddedSuffixLength = 50;
 
@@ -884,6 +926,16 @@ namespace ValvePak.Test
 			package.Write(output);
 
 			return output.ToArray();
+		}
+
+		private static int GetOtherMD5SectionOffset(byte[] package)
+		{
+			var span = package.AsSpan();
+			var treeSize = BinaryPrimitives.ReadInt32LittleEndian(span[TreeSizeOffset..]);
+			var fileDataSectionSize = BinaryPrimitives.ReadInt32LittleEndian(span[FileDataSectionSizeOffset..]);
+			var archiveMD5SectionSize = BinaryPrimitives.ReadInt32LittleEndian(span[ArchiveMD5SectionSizeOffset..]);
+
+			return HeaderSize + treeSize + fileDataSectionSize + archiveMD5SectionSize;
 		}
 
 		/// <summary>

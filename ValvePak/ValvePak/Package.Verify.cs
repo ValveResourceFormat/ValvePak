@@ -34,9 +34,15 @@ namespace ValvePak
 		/// <summary>
 		/// Verify MD5 hashes provided in the VPK.
 		/// </summary>
+		/// <remarks>
+		/// Version 1 packages have no checksums, so nothing is verified for them.
+		/// The whole file checksum covers the file tree and archive MD5 section checksums, so when it matches,
+		/// a mismatching file tree or archive MD5 section checksum is reported to <paramref name="progressReporter"/> instead of thrown.
+		/// </remarks>
+		/// <param name="progressReporter">If provided, will report a string for each checksum mismatch that is not thrown, or that a version 1 package has no checksums.</param>
 		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
-		/// <exception cref="InvalidDataException">The package has no checksums, or a checksum does not match.</exception>
-		public void VerifyHashes()
+		/// <exception cref="InvalidDataException">The package has no checksums, or the whole file checksum does not match.</exception>
+		public void VerifyHashes(IProgress<string>? progressReporter = null)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
@@ -45,9 +51,10 @@ namespace ValvePak
 				throw new InvalidOperationException("The package has not been read.");
 			}
 
-			if (Version != 2)
+			if (Version == 1)
 			{
-				throw new InvalidDataException("Only version 2 is supported.");
+				progressReporter?.Report("Version 1 packages have no checksums to verify.");
+				return;
 			}
 
 			if (TreeChecksum == null || ArchiveMD5EntriesChecksum == null || WholeFileChecksum == null)
@@ -55,26 +62,35 @@ namespace ValvePak
 				throw new InvalidDataException("The package has no checksum section.");
 			}
 
-			var hash = HashPackageRange(HeaderSize, TreeSize, HashAlgorithmName.MD5);
+			var wholeFileHash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5);
+			var wholeFileHashMatches = wholeFileHash.SequenceEqual(WholeFileChecksum);
 
-			if (!hash.SequenceEqual(TreeChecksum))
+			VerifySectionHash("File tree", HeaderSize, TreeSize, TreeChecksum, wholeFileHashMatches, progressReporter);
+			VerifySectionHash("Archive MD5 entries", FileSizeBeforeArchiveMD5Entries, ArchiveMD5SectionSize, ArchiveMD5EntriesChecksum, wholeFileHashMatches, progressReporter);
+
+			if (!wholeFileHashMatches)
 			{
-				throw new InvalidDataException($"File tree checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(TreeChecksum)})");
+				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(wholeFileHash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
+			}
+		}
+
+		private void VerifySectionHash(string sectionName, long offset, long length, byte[] expected, bool wholeFileHashMatches, IProgress<string>? progressReporter)
+		{
+			var hash = HashPackageRange(offset, length, HashAlgorithmName.MD5);
+
+			if (hash.SequenceEqual(expected))
+			{
+				return;
 			}
 
-			hash = HashPackageRange(FileSizeBeforeArchiveMD5Entries, ArchiveMD5SectionSize, HashAlgorithmName.MD5);
+			var message = $"{sectionName} checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(expected)})";
 
-			if (!hash.SequenceEqual(ArchiveMD5EntriesChecksum))
+			if (!wholeFileHashMatches)
 			{
-				throw new InvalidDataException($"Archive MD5 entries checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(ArchiveMD5EntriesChecksum)})");
+				throw new InvalidDataException(message);
 			}
 
-			hash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5);
-
-			if (!hash.SequenceEqual(WholeFileChecksum))
-			{
-				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
-			}
+			progressReporter?.Report($"{message}, ignored because the package checksum matches.");
 		}
 
 		/// <summary>
@@ -190,6 +206,7 @@ namespace ValvePak
 		/// Verify CRC32 checksums of all files in the package.
 		/// </summary>
 		/// <param name="progressReporter">If provided, will report a string with the current verification progress.</param>
+		/// <exception cref="EndOfStreamException">An archive ends before all bytes of an entry could be read.</exception>
 		public void VerifyFileChecksums(IProgress<string>? progressReporter = null)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
@@ -224,7 +241,7 @@ namespace ValvePak
 		/// <summary>
 		/// Verifies the RSA signature.
 		/// </summary>
-		/// <returns>True if signature is valid, false otherwise.</returns>
+		/// <returns>True if the signature is valid or the package has no signature (see <see cref="IsSigned"/>), false otherwise.</returns>
 		public bool IsSignatureValid()
 		{
 			if (PublicKey == null || Signature == null)
