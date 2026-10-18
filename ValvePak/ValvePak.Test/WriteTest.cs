@@ -35,9 +35,7 @@ namespace ValvePak.Test
 			output.Position = 0;
 
 			// Verify
-			using var packageWritten = new Package();
-			packageWritten.SetFileName("test.vpk");
-			packageWritten.Read(output);
+			using var packageWritten = ReadBack(output);
 			packageWritten.VerifyHashes();
 
 			var newEntry = packageWritten.FindEntry(newName);
@@ -76,9 +74,7 @@ namespace ValvePak.Test
 			output.Position = 0;
 
 			// Verify
-			using var packageWritten = new Package();
-			packageWritten.SetFileName("test.vpk");
-			packageWritten.Read(output);
+			using var packageWritten = ReadBack(output);
 			packageWritten.VerifyHashes();
 
 			await Assert.That(packageWritten.Entries!["txt"]).Count().IsEqualTo(1000);
@@ -118,15 +114,7 @@ namespace ValvePak.Test
 		public async Task SetsSpaces()
 		{
 			using var package = new Package();
-			var file = package.AddFile("", []);
-			using (Assert.Multiple())
-			{
-				await Assert.That(file.TypeName).IsEqualTo(" ");
-				await Assert.That(file.DirectoryName).IsEqualTo(" ");
-				await Assert.That(file.FileName).IsEqualTo("");
-				await Assert.That(package.Entries!.ContainsKey(" ")).IsTrue();
-				await Assert.That(package.Entries[" "][0]).IsEqualTo(file);
-			}
+			await Assert.That(() => package.AddFile("", [])).ThrowsExactly<ArgumentException>();
 
 			var file2 = package.AddFile("hello", []);
 			using (Assert.Multiple())
@@ -134,6 +122,8 @@ namespace ValvePak.Test
 				await Assert.That(file2.TypeName).IsEqualTo(" ");
 				await Assert.That(file2.DirectoryName).IsEqualTo(" ");
 				await Assert.That(file2.FileName).IsEqualTo("hello");
+				await Assert.That(package.Entries!.ContainsKey(" ")).IsTrue();
+				await Assert.That(package.Entries[" "][0]).IsEqualTo(file2);
 			}
 
 			var file3 = package.AddFile("hello.txt", []);
@@ -194,9 +184,7 @@ namespace ValvePak.Test
 			}
 
 			using var output = new MemoryStream(nonSeekable.ToArray());
-			using var readBack = new Package();
-			readBack.SetFileName("test.vpk");
-			readBack.Read(output);
+			using var readBack = ReadBack(output);
 
 			if (version >= 2)
 			{
@@ -259,9 +247,7 @@ namespace ValvePak.Test
 
 			output.Position = 0;
 
-			using var readBack = new Package();
-			readBack.SetFileName("test.vpk");
-			readBack.Read(output);
+			using var readBack = ReadBack(output);
 
 			using (Assert.Multiple())
 			{
@@ -292,9 +278,7 @@ namespace ValvePak.Test
 
 			output.Position = 0;
 
-			using var readBack = new Package();
-			readBack.SetFileName("test.vpk");
-			readBack.Read(output);
+			using var readBack = ReadBack(output);
 
 			using (Assert.Multiple())
 			{
@@ -327,18 +311,14 @@ namespace ValvePak.Test
 
 			output.Position = 0;
 
-			using var readBack = new Package();
-			readBack.SetFileName("test.vpk");
-			readBack.Read(output);
+			using var readBack = ReadBack(output);
 
 			using var output2 = new MemoryStream();
 			readBack.Write(output2);
 
 			output2.Position = 0;
 
-			using var readBack2 = new Package();
-			readBack2.SetFileName("test.vpk");
-			readBack2.Read(output2);
+			using var readBack2 = ReadBack(output2);
 
 			await Assert.That(readBack2.Version).IsEqualTo(1u);
 
@@ -428,9 +408,7 @@ namespace ValvePak.Test
 
 			output.Position = position;
 
-			using var readBack = new Package();
-			readBack.SetFileName("test.vpk");
-			readBack.Read(output);
+			using var readBack = ReadBack(output);
 
 			await Assert.That(readBack.Version).IsEqualTo(version);
 
@@ -515,6 +493,35 @@ namespace ValvePak.Test
 			}
 
 			await Assert.That(package.FindEntry("addons/chess/missing.vdf")).IsNull();
+		}
+
+		[Test]
+		public async Task RenameFile()
+		{
+			using var package = new Package();
+			package.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
+			var entry = package.AddFile("kitten.jpg", Encoding.UTF8.GetBytes("meow"));
+			package.AddFile("other.txt", []);
+
+			package.RenameFile(entry, "/Path\\To/Cat.PNG");
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(entry.GetFullPath()).IsEqualTo("path/to/cat.png");
+				await Assert.That(package.FindEntry("kitten.jpg")).IsNull();
+				await Assert.That(package.FindEntry("path/to/cat.png")).IsEqualTo(entry);
+				await Assert.That(package.Entries!.ContainsKey("jpg")).IsFalse();
+				await Assert.That(() => package.RenameFile(entry, "other.txt")).ThrowsExactly<ArgumentException>();
+			}
+		}
+
+		private static Package ReadBack(Stream stream)
+		{
+			var package = new Package();
+			package.SetFileName("test.vpk");
+			package.Read(stream);
+
+			return package;
 		}
 
 		/// <summary>
