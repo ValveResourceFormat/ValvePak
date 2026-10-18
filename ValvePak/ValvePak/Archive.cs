@@ -26,6 +26,11 @@ namespace ValvePak
 		protected long Origin { get; }
 
 		/// <summary>
+		/// Gets the size in bytes of the archive.
+		/// </summary>
+		public abstract long Length { get; }
+
+		/// <summary>
 		/// Reads data at the given offset until the output is full or the end of the archive is reached.
 		/// This method is safe to call from multiple threads.
 		/// </summary>

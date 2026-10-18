@@ -25,6 +25,8 @@ namespace ValvePak
 			OwnsHandle = ownsHandle;
 		}
 
+		public override long Length => RandomAccess.GetLength(Handle) - Origin;
+
 		public override int Read(long offset, Span<byte> output)
 		{
 			var totalRead = 0;
