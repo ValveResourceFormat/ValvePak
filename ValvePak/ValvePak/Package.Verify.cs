@@ -40,16 +40,13 @@ namespace ValvePak
 		/// a mismatching file tree or archive MD5 section checksum is reported to <paramref name="progressReporter"/> instead of thrown.
 		/// </remarks>
 		/// <param name="progressReporter">If provided, will report a string for each checksum mismatch that is not thrown, or that a version 1 package has no checksums.</param>
-		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
+		/// <exception cref="InvalidOperationException">The package has not been read, or its directory file could not be opened again after writing.</exception>
 		/// <exception cref="InvalidDataException">The package has no checksums, or the whole file checksum does not match.</exception>
 		public void VerifyHashes(IProgress<string>? progressReporter = null)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			if (Reader == null)
-			{
-				throw new InvalidOperationException("The package has not been read.");
-			}
+			ThrowIfDirectoryFileClosed();
 
 			if (Version == 1)
 			{
