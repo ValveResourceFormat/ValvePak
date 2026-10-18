@@ -914,6 +914,7 @@ namespace ValvePak.Test
 		private const int ArchiveMD5SectionSizeOffset = 16;
 		private const int SignatureSectionSizeOffset = 24;
 		private const int HeaderSize = 28;
+		private const int UnsignedSignatureSectionSize = 20;
 		private const int EmbeddedPrefixLength = 1000;
 		private const int EmbeddedSuffixLength = 50;
 
@@ -943,11 +944,11 @@ namespace ValvePak.Test
 		/// </summary>
 		private static byte[] CreateSignedPackageBytes(params int[] signatureSection)
 		{
-			var package = CreateSmallPackageBytes();
+			var package = CreateSmallPackageBytes().AsSpan(..^UnsignedSignatureSectionSize);
 			var signatureSize = signatureSection.Length * sizeof(int);
 			var result = new byte[package.Length + signatureSize];
 
-			package.CopyTo(result, 0);
+			package.CopyTo(result);
 			BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(SignatureSectionSizeOffset), (uint)signatureSize);
 
 			for (var i = 0; i < signatureSection.Length; i++)

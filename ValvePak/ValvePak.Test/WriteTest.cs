@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,6 +11,8 @@ namespace ValvePak.Test
 {
 	internal sealed class WriteTest
 	{
+		private const int FractionSize = 1024 * 1024;
+
 		[Test]
 		public async Task CreateNewPackage()
 		{
@@ -250,6 +253,105 @@ namespace ValvePak.Test
 			{
 				await Assert.That(readBack.FindEntry("dir/noext")).IsNull();
 				await Assert.That(readBack.FindEntry("has")).IsNull();
+			}
+		}
+
+		[Test]
+		public async Task WritesDirectoryTreeSortedLikeValve()
+		{
+			using var package = new Package();
+
+			string[] paths =
+			[
+				"bc/b.txt",
+				"zeta/a.txt",
+				"b_c/a.txt",
+				"a/a.txt",
+				"root.txt",
+				"a/b.bin",
+				"a/a_b.txt",
+				"a/ab.txt",
+				"a/a.x_y",
+			];
+
+			foreach (var path in paths)
+			{
+				package.AddFile(path, Encoding.UTF8.GetBytes(path));
+			}
+
+			// Names from read packages can have upper case letters, which sort as lower case
+			package.FindEntry("zeta/a.txt")!.DirectoryName = "Zeta";
+
+			using var output = new MemoryStream();
+			package.Write(output);
+			output.Position = 0;
+
+			using var readBack = ReadBack(output);
+
+			string[] expected =
+			[
+				"a/b.bin",
+				"root.txt",
+				"a/a.txt",
+				"a/a_b.txt",
+				"a/ab.txt",
+				"b_c/a.txt",
+				"bc/b.txt",
+				"Zeta/a.txt",
+				"a/a.x_y",
+			];
+
+			await Assert.That(readBack.Entries!.Values.SelectMany(static entries => entries).Select(static entry => entry.GetFullPath()).ToArray()).IsEquivalentTo(expected, CollectionOrdering.Matching);
+			await Assert.That(() => readBack.VerifyHashes()).ThrowsNothing();
+		}
+
+		[Test]
+		[Arguments(2 * FractionSize, 2)]
+		[Arguments((2 * FractionSize) + 1, 3)]
+		[Arguments(100, 1)]
+		[Arguments(0, 0)]
+		public async Task WritesUnsignedSignatureSectionAndHashesEmbeddedData(int dataLength, int fractionCount)
+		{
+			var data = new byte[dataLength];
+
+			for (var i = 0; i < data.Length; i++)
+			{
+				data[i] = (byte)(i * 37);
+			}
+
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				package.AddFile("data.bin", data);
+				package.AddFile("empty.bin", []);
+				package.Write(output);
+			}
+
+			var bytes = output.ToArray();
+			output.Position = 0;
+
+			using var readBack = ReadBack(output);
+
+			var signatureSection = bytes[(int)(readBack.HeaderSize + readBack.TreeSize + readBack.FileDataSectionSize + readBack.ArchiveMD5SectionSize + readBack.OtherMD5SectionSize)..];
+			var emptyEntry = readBack.FindEntry("empty.bin");
+			await Assert.That(emptyEntry).IsNotNull();
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(emptyEntry.ArchiveIndex).IsEqualTo((ushort)0x7FFF);
+				await Assert.That(emptyEntry.Offset).IsEqualTo(uint.MaxValue);
+				await Assert.That(emptyEntry.Length).IsZero();
+				await Assert.That(readBack.ArchiveMD5SectionSize).IsEqualTo((uint)(fractionCount * ChunkHashFraction.SectionEntrySize));
+				await Assert.That(signatureSection.Length).IsEqualTo(20);
+				await Assert.That(BinaryPrimitives.ReadInt32LittleEndian(signatureSection)).IsEqualTo(Package.MAGIC);
+				await Assert.That(BinaryPrimitives.ReadInt32LittleEndian(signatureSection.AsSpan(4))).IsEqualTo((int)ESignatureType.OnlyFileChecksum);
+				await Assert.That(signatureSection.AsSpan(8).ContainsAnyExcept((byte)0)).IsFalse();
+				await Assert.That(readBack.IsSigned).IsFalse();
+				await Assert.That(readBack.AccessPackFileHashes.TrueForAll(static fraction => fraction.ArchiveIndex == 0x7FFF && fraction.HashType == EHashType.Blake3 && fraction.Length > 0)).IsTrue();
+				await Assert.That(() => readBack.VerifyHashes()).ThrowsNothing();
+				await Assert.That(() => readBack.VerifyChunkHashes()).ThrowsNothing();
+				await Assert.That(() => readBack.VerifyFileChecksums()).ThrowsNothing();
 			}
 		}
 

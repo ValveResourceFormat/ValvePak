@@ -1,6 +1,9 @@
 using System;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -32,6 +35,8 @@ namespace ValvePak
 		/// Size in bytes of the buffer that file data is copied through.
 		/// </summary>
 		private const int CopyBufferSize = 1024 * 1024;
+
+		private const int UnsignedSignatureSectionSize = 20;
 
 		/// <summary>
 		/// The chunk file that files added with multi chunk enabled are currently written to.
@@ -253,9 +258,10 @@ namespace ValvePak
 		/// </summary>
 		private PackageEntry AddFileToDirectoryFile(PackageEntry entry, byte[] fileData)
 		{
-			entry.SmallData = fileData;
+			entry.PendingData = fileData;
+			entry.Length = (uint)fileData.Length;
 			entry.CRC32 = Crc32.HashToUInt32(fileData);
-			entry.ArchiveIndex = 0x7FFF;
+			entry.ArchiveIndex = DirectoryArchiveIndex;
 
 			InsertEntry(entry);
 
@@ -285,26 +291,45 @@ namespace ValvePak
 		/// </summary>
 		private ChunkFileWriter GetChunkFileForNextFile()
 		{
-			if (CurrentChunkFile != null && CurrentChunkFile.Length <= (uint)WriteChunkSize)
+			if (HasRoomForNextFile(CurrentChunkFile))
 			{
 				return CurrentChunkFile;
 			}
 
 			var baseName = GetChunkBaseName();
-			var archiveIndex = (ushort)(HighestChunkIndex + 1);
+			var archiveIndex = HighestChunkIndex + 1;
 
-			while (IsReadPackage && File.Exists(GetArchiveIndexFullFilePath(baseName, archiveIndex)))
+			while (IsReadPackage && archiveIndex < DirectoryArchiveIndex && File.Exists(GetArchiveIndexFullFilePath(baseName, (ushort)archiveIndex)))
 			{
 				archiveIndex++;
 			}
 
-			var chunkFile = new ChunkFileWriter(archiveIndex, GetArchiveIndexFullFilePath(baseName, archiveIndex), IsReadPackage ? FileMode.CreateNew : FileMode.Create);
+			ThrowIfChunkLimitReached(archiveIndex);
+
+			var chunkFile = new ChunkFileWriter((ushort)archiveIndex, GetArchiveIndexFullFilePath(baseName, (ushort)archiveIndex), IsReadPackage ? FileMode.CreateNew : FileMode.Create);
 
 			FinishCurrentChunkFile();
 			CurrentChunkFile = chunkFile;
 			HighestChunkIndex = archiveIndex;
+			ChunkBaseName = baseName;
 
 			return chunkFile;
+		}
+
+		/// <summary>
+		/// Returns whether the chunk file is open and not larger than <see cref="WriteChunkSize"/>, so that the next file still goes into it.
+		/// </summary>
+		private bool HasRoomForNextFile([NotNullWhen(true)] ChunkFileWriter? chunkFile)
+		{
+			return chunkFile != null && chunkFile.Length <= (uint)WriteChunkSize;
+		}
+
+		private static void ThrowIfChunkLimitReached(int archiveIndex)
+		{
+			if (archiveIndex >= DirectoryArchiveIndex)
+			{
+				throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
+			}
 		}
 
 		private void FinishCurrentChunkFile()
@@ -326,7 +351,7 @@ namespace ValvePak
 				throw new InvalidOperationException("Call SetFileName() with the path of the directory file before adding files with multi chunk enabled, chunk files are created next to it.");
 			}
 
-			return ChunkBaseName ??= Path.GetFullPath(FileName);
+			return ChunkBaseName ?? Path.GetFullPath(FileName);
 		}
 
 		/// <summary>
@@ -375,10 +400,14 @@ namespace ValvePak
 			{
 				for (var i = 0; i < source.Length; i++)
 				{
-					var c = source[i];
-					span[i] = c is >= 'A' and <= 'Z' ? (char)(c | 0x20) : c;
+					span[i] = ToLowerAscii(source[i]);
 				}
 			});
+		}
+
+		private static char ToLowerAscii(char c)
+		{
+			return c is >= 'A' and <= 'Z' ? (char)(c | 0x20) : c;
 		}
 
 		/// <summary>
@@ -408,6 +437,24 @@ namespace ValvePak
 		private IEnumerable<PackageEntry> GetAllEntries()
 		{
 			return Entries?.Values.SelectMany(static entries => entries) ?? [];
+		}
+
+		/// <summary>
+		/// Returns the archive indices of the entries with data in chunk files.
+		/// </summary>
+		private IEnumerable<ushort> GetChunkIndicesWithData()
+		{
+			return GetAllEntries().Where(IsInChunkFile).Select(static entry => entry.ArchiveIndex);
+		}
+
+		private static bool IsInChunkFile(PackageEntry entry)
+		{
+			return entry.ArchiveIndex != DirectoryArchiveIndex && entry.Length > 0;
+		}
+
+		private static bool IsInDirectoryFile(PackageEntry entry)
+		{
+			return entry.ArchiveIndex == DirectoryArchiveIndex && entry.Length > 0;
 		}
 
 		/// <summary>
@@ -459,34 +506,31 @@ namespace ValvePak
 				var chunkHashFractions = GetChunkHashFractions();
 
 				using var output = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
-				WriteDirectoryFile(output, entries, chunkHashFractions, chunkLocations: []);
+				WriteDirectoryFile(output, entries, chunkHashFractions, chunkLocations: null);
 				output.SetLength(output.Position);
 
 				return;
 			}
 
 			var token = Path.GetRandomFileName();
-			var replacements = new List<(string TemporaryPath, string Path)>();
+			var chunkReplacements = new List<FileReplacement>();
+			var directoryReplacement = new FileReplacement(GetTemporaryPath(fullPath, token), fullPath);
 
 			try
 			{
-				var chunkLocations = new Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)>();
+				Dictionary<PackageEntry, ChunkLocation>? chunkLocations = null;
 				List<ChunkHashFraction>? chunkHashFractions;
 
 				if (repack)
 				{
-					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, token, replacements);
+					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, token, chunkReplacements);
 				}
 				else
 				{
 					chunkHashFractions = GetChunkHashFractions();
 				}
 
-				var chunkFileCount = replacements.Count;
-				var temporaryPath = $"{fullPath}.{token}.tmp";
-				replacements.Add((temporaryPath, fullPath));
-
-				using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+				using (var stream = new FileStream(directoryReplacement.TemporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
 				{
 					WriteDirectoryFile(stream, entries, chunkHashFractions, chunkLocations);
 				}
@@ -497,73 +541,24 @@ namespace ValvePak
 				{
 					FinishCurrentChunkFile();
 
-					foreach (var archiveIndex in Archives.Keys.Where(static archiveIndex => archiveIndex != 0x7FFF))
+					foreach (var archiveIndex in Archives.Keys.Where(static archiveIndex => archiveIndex != DirectoryArchiveIndex))
 					{
 						CloseArchive(archiveIndex);
 					}
 				}
 
-				if (replacesReadFile)
-				{
-					CloseDirectoryFile();
-				}
+				var backupPaths = ReplaceFilesOrReopen(chunkReplacements, directoryReplacement, token, replacesReadFile);
 
-				List<string> backupPaths;
-
-				try
-				{
-					backupPaths = ReplaceFiles(replacements, token);
-				}
-				catch (Exception exception) when (replacesReadFile)
-				{
-					try
-					{
-						ReopenDirectoryFile(fullPath);
-					}
-					catch (Exception reopenException)
-					{
-						throw new AggregateException(exception, reopenException);
-					}
-
-					throw;
-				}
-
-				if (repack)
+				if (chunkLocations != null)
 				{
 					var staleHighestIndex = writesOverChunkFiles ? HighestChunkIndex : -1;
 
-					foreach (var (entry, (archiveIndex, offset)) in chunkLocations)
-					{
-						entry.ArchiveIndex = archiveIndex;
-						entry.Offset = offset;
-					}
-
-					FileName = baseName;
-					ChunkBaseName = baseName;
-					IsDirVPK = isDirVpk;
-					HighestChunkIndex = chunkFileCount - 1;
-					UpdatedChunkHashFractions.Clear();
-
-					foreach (var fractions in (chunkHashFractions ?? []).GroupBy(static fraction => fraction.ArchiveIndex))
-					{
-						UpdatedChunkHashFractions[fractions.Key] = [.. fractions];
-					}
-
+					ApplyRepackedLayout(chunkLocations, chunkHashFractions, baseName, isDirVpk, chunkReplacements.Count);
 					backupPaths.ForEach(TryDeleteFile);
 
-					if (chunkFileCount > 0 || writesOverChunkFiles)
+					if (chunkReplacements.Count > 0 || writesOverChunkFiles)
 					{
-						for (var i = chunkFileCount; i < 0x7FFF; i++)
-						{
-							var path = GetArchiveIndexFullFilePath(baseName, (ushort)i);
-
-							if (i > staleHighestIndex && !File.Exists(path))
-							{
-								break;
-							}
-
-							TryDeleteFile(path);
-						}
+						DeleteStaleChunkFiles(baseName, chunkReplacements.Count, staleHighestIndex);
 					}
 				}
 
@@ -574,10 +569,90 @@ namespace ValvePak
 			}
 			finally
 			{
-				foreach (var (temporaryPath, _) in replacements)
+				foreach (var (temporaryPath, _) in chunkReplacements)
 				{
 					TryDeleteFile(temporaryPath);
 				}
+
+				TryDeleteFile(directoryReplacement.TemporaryPath);
+			}
+		}
+
+		private static string GetTemporaryPath(string path, string token)
+		{
+			return $"{path}.{token}.tmp";
+		}
+
+		/// <summary>
+		/// Points the copied entries at the repacked chunk files and makes the package refer to the chunk files named after <paramref name="baseName"/>.
+		/// </summary>
+		private void ApplyRepackedLayout(Dictionary<PackageEntry, ChunkLocation> chunkLocations, List<ChunkHashFraction>? chunkHashFractions, string baseName, bool isDirVpk, int chunkFileCount)
+		{
+			foreach (var (entry, (archiveIndex, offset)) in chunkLocations)
+			{
+				entry.ArchiveIndex = archiveIndex;
+				entry.Offset = offset;
+			}
+
+			FileName = baseName;
+			ChunkBaseName = chunkFileCount > 0 ? baseName : null;
+			IsDirVPK = isDirVpk;
+			HighestChunkIndex = chunkFileCount - 1;
+			UpdatedChunkHashFractions.Clear();
+
+			foreach (var fractions in (chunkHashFractions ?? []).GroupBy(static fraction => fraction.ArchiveIndex))
+			{
+				UpdatedChunkHashFractions[fractions.Key] = [.. fractions];
+			}
+		}
+
+		/// <summary>
+		/// Deletes chunk files from <paramref name="firstIndex"/> on until a number has no file, and up to <paramref name="staleHighestIndex"/> regardless.
+		/// </summary>
+		private static void DeleteStaleChunkFiles(string baseName, int firstIndex, int staleHighestIndex)
+		{
+			for (var i = firstIndex; i < DirectoryArchiveIndex; i++)
+			{
+				var path = GetArchiveIndexFullFilePath(baseName, (ushort)i);
+
+				if (i > staleHighestIndex && !File.Exists(path))
+				{
+					break;
+				}
+
+				TryDeleteFile(path);
+			}
+		}
+
+		/// <summary>
+		/// Replaces the files, closing the directory file first when it is the one the package reads from, and opening it again if replacing fails.
+		/// </summary>
+		/// <returns>The paths that the replaced chunk files were moved aside to.</returns>
+		private List<string> ReplaceFilesOrReopen(List<FileReplacement> chunkReplacements, FileReplacement directoryReplacement, string token, bool replacesReadFile)
+		{
+			if (!replacesReadFile)
+			{
+				return ReplaceFiles(chunkReplacements, directoryReplacement, token);
+			}
+
+			CloseDirectoryFile();
+
+			try
+			{
+				return ReplaceFiles(chunkReplacements, directoryReplacement, token);
+			}
+			catch (Exception exception)
+			{
+				try
+				{
+					ReopenDirectoryFile(directoryReplacement.Path);
+				}
+				catch (Exception reopenException)
+				{
+					throw new AggregateException(exception, reopenException);
+				}
+
+				throw;
 			}
 		}
 
@@ -585,10 +660,10 @@ namespace ValvePak
 		/// Copies the data of all entries in chunk files into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>.
 		/// </summary>
 		/// <returns>Where the data of each copied entry was written to, and the hashes of the new chunk files or null if there are none.</returns>
-		private (Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)> Locations, List<ChunkHashFraction>? HashFractions) WriteRepackedChunkFiles(
-			List<PackageEntry> entries, string baseName, string token, List<(string TemporaryPath, string Path)> replacements)
+		private (Dictionary<PackageEntry, ChunkLocation> Locations, List<ChunkHashFraction>? HashFractions) WriteRepackedChunkFiles(
+			List<PackageEntry> entries, string baseName, string token, List<FileReplacement> replacements)
 		{
-			var locations = new Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)>();
+			var locations = new Dictionary<PackageEntry, ChunkLocation>();
 			var hashFractions = new List<ChunkHashFraction>();
 			ChunkFileWriter? chunkFile = null;
 
@@ -596,18 +671,20 @@ namespace ValvePak
 			{
 				foreach (var entry in entries)
 				{
-					if (entry.ArchiveIndex == 0x7FFF || entry.Length == 0)
+					if (!IsInChunkFile(entry))
 					{
 						continue;
 					}
 
-					if (chunkFile == null || chunkFile.Length > (uint)WriteChunkSize)
+					if (!HasRoomForNextFile(chunkFile))
 					{
-						var archiveIndex = (ushort)(chunkFile == null ? 0 : chunkFile.ArchiveIndex + 1);
-						var path = GetArchiveIndexFullFilePath(baseName, archiveIndex);
-						var temporaryPath = $"{path}.{token}.tmp";
-						var nextChunkFile = new ChunkFileWriter(archiveIndex, temporaryPath);
-						replacements.Add((temporaryPath, path));
+						var archiveIndex = chunkFile == null ? 0 : chunkFile.ArchiveIndex + 1;
+						ThrowIfChunkLimitReached(archiveIndex);
+
+						var path = GetArchiveIndexFullFilePath(baseName, (ushort)archiveIndex);
+						var temporaryPath = GetTemporaryPath(path, token);
+						var nextChunkFile = new ChunkFileWriter((ushort)archiveIndex, temporaryPath);
+						replacements.Add(new FileReplacement(temporaryPath, path));
 
 						if (chunkFile != null)
 						{
@@ -618,7 +695,7 @@ namespace ValvePak
 						chunkFile = nextChunkFile;
 					}
 
-					locations[entry] = (chunkFile.ArchiveIndex, chunkFile.Length);
+					locations[entry] = new ChunkLocation(chunkFile.ArchiveIndex, chunkFile.Length);
 					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, chunkFile.Write);
 				}
 
@@ -638,18 +715,18 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Moves the temporary files over their targets, of which the last is the directory file.
+		/// Moves the temporary files over their targets, the directory file last.
 		/// Existing chunk files are moved aside first and are moved back if any move fails, so that either all files are replaced or none are.
 		/// </summary>
 		/// <returns>The paths that the replaced chunk files were moved aside to.</returns>
-		private static List<string> ReplaceFiles(List<(string TemporaryPath, string Path)> replacements, string token)
+		private static List<string> ReplaceFiles(List<FileReplacement> chunkReplacements, FileReplacement directoryReplacement, string token)
 		{
 			var backups = new Dictionary<string, string>();
 			var replaced = new List<string>();
 
 			try
 			{
-				foreach (var (_, path) in replacements[..^1])
+				foreach (var (_, path) in chunkReplacements)
 				{
 					if (File.Exists(path))
 					{
@@ -659,7 +736,7 @@ namespace ValvePak
 					}
 				}
 
-				foreach (var (temporaryPath, path) in replacements)
+				foreach (var (temporaryPath, path) in chunkReplacements.Append(directoryReplacement))
 				{
 					File.Move(temporaryPath, path, overwrite: true);
 					replaced.Add(path);
@@ -742,7 +819,7 @@ namespace ValvePak
 				throw new InvalidOperationException("This package reads from the given stream or file, use Write(string) to write over the directory file it was read from.");
 			}
 
-			WriteDirectoryFile(stream, GetEntriesInTreeOrder(), GetChunkHashFractions(), chunkLocations: []);
+			WriteDirectoryFile(stream, GetEntriesInTreeOrder(), GetChunkHashFractions(), chunkLocations: null);
 		}
 
 		/// <summary>
@@ -754,11 +831,10 @@ namespace ValvePak
 
 			foreach (var entry in entries)
 			{
-				if (entry.ArchiveIndex == 0x7FFF)
+				if (IsInDirectoryFile(entry))
 				{
-					entry.Length = entry.TotalLength;
-					entry.SmallData = [];
 					entry.Offset = offset;
+					entry.PendingData = null;
 					offset += entry.Length;
 				}
 			}
@@ -774,15 +850,12 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Returns all entries in the order they are written into the directory tree, and checks that the data of entries in the directory file can be read.
+		/// Returns all entries sorted the way Valve's packer writes the directory tree: by type, then directory, then file name,
+		/// and checks that the data of entries in the directory file can be read.
 		/// </summary>
 		private List<PackageEntry> GetEntriesInTreeOrder()
 		{
-			// Group the entries by type and directory
-			var entries = GetAllEntries()
-				.GroupBy(static entry => entry.TypeName)
-				.SelectMany(static typeEntries => typeEntries.GroupBy(GetTreeDirectoryName).SelectMany(static directoryEntries => directoryEntries))
-				.ToList();
+			var entries = GetAllEntries().ToList();
 
 			foreach (var entry in entries)
 			{
@@ -792,12 +865,48 @@ namespace ValvePak
 				}
 			}
 
-			if (entries.Exists(static entry => entry.ArchiveIndex == 0x7FFF && entry.Length > 0))
+			if (entries.Exists(static entry => IsInDirectoryFile(entry) && entry.PendingData == null))
 			{
 				ThrowIfDirectoryFileClosed();
 			}
 
+			entries.Sort(CompareTreeOrder);
+
 			return entries;
+		}
+
+		private static int CompareTreeOrder(PackageEntry x, PackageEntry y)
+		{
+			var comparison = CompareNames(x.TypeName, y.TypeName);
+
+			if (comparison == 0)
+			{
+				comparison = CompareNames(GetTreeDirectoryName(x), GetTreeDirectoryName(y));
+			}
+
+			return comparison != 0 ? comparison : CompareNames(x.FileName, y.FileName);
+		}
+
+		/// <summary>
+		/// Compares names with ASCII letters lowercased, and names that are equal that way ordinally.
+		/// </summary>
+		private static int CompareNames(string x, string y)
+		{
+			var length = Math.Min(x.Length, y.Length);
+
+			for (var i = 0; i < length; i++)
+			{
+				var comparison = ToLowerAscii(x[i]).CompareTo(ToLowerAscii(y[i]));
+
+				if (comparison != 0)
+				{
+					return comparison;
+				}
+			}
+
+			var lengthComparison = x.Length.CompareTo(y.Length);
+
+			return lengthComparison != 0 ? lengthComparison : string.CompareOrdinal(x, y);
 		}
 
 		private static string GetTreeDirectoryName(PackageEntry entry)
@@ -808,7 +917,7 @@ namespace ValvePak
 		/// <summary>
 		/// Writes the directory file, with entries in chunk files where they are unless they are in <paramref name="chunkLocations"/>.
 		/// </summary>
-		private void WriteDirectoryFile(Stream stream, List<PackageEntry> entries, List<ChunkHashFraction>? chunkHashFractions, Dictionary<PackageEntry, (ushort ArchiveIndex, uint Offset)> chunkLocations)
+		private void WriteDirectoryFile(Stream stream, List<PackageEntry> entries, List<ChunkHashFraction>? chunkHashFractions, Dictionary<PackageEntry, ChunkLocation>? chunkLocations)
 		{
 			// The file tree is built in memory first, so that the header can be written with its size and the tree can be hashed
 			using var treeStream = new MemoryStream();
@@ -820,55 +929,59 @@ namespace ValvePak
 
 			const byte NullByte = 0;
 
+			void WriteNullTerminated(string value)
+			{
+				writer.Write(Encoding.UTF8.GetBytes(value));
+				writer.Write(NullByte);
+			}
+
 			foreach (var typeEntries in entries.GroupBy(static entry => entry.TypeName))
 			{
-				writer.Write(Encoding.UTF8.GetBytes(typeEntries.Key));
-				writer.Write(NullByte);
+				WriteNullTerminated(typeEntries.Key);
 
 				foreach (var directoryEntries in typeEntries.GroupBy(GetTreeDirectoryName))
 				{
-					writer.Write(Encoding.UTF8.GetBytes(directoryEntries.Key));
-					writer.Write(NullByte);
+					WriteNullTerminated(directoryEntries.Key);
 
 					foreach (var entry in directoryEntries)
 					{
 						var archiveIndex = entry.ArchiveIndex;
 						var fileOffset = entry.Offset;
-						var fileLength = entry.Length;
-						var preloadData = entry.SmallData;
 
-						if (entry.ArchiveIndex == 0x7FFF)
+						if (entry.Length == 0)
 						{
-							fileLength = entry.TotalLength;
-							preloadData = [];
-
-							if ((ulong)embeddedDataOffset + fileLength > int.MaxValue)
+							archiveIndex = DirectoryArchiveIndex;
+							fileOffset = uint.MaxValue;
+						}
+						else if (chunkLocations != null && chunkLocations.TryGetValue(entry, out var location))
+						{
+							(archiveIndex, fileOffset) = location;
+						}
+						else if (archiveIndex == DirectoryArchiveIndex)
+						{
+							if ((ulong)embeddedDataOffset + entry.Length > int.MaxValue)
 							{
 								throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
 							}
 
 							fileOffset = embeddedDataOffset;
-							embeddedDataOffset += fileLength;
+							embeddedDataOffset += entry.Length;
 							embeddedEntries.Add(entry);
 						}
-						else if (preloadData.Length > ushort.MaxValue)
+
+						if (entry.SmallData.Length > ushort.MaxValue)
 						{
-							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {preloadData.Length} preload bytes, the directory tree can store at most {ushort.MaxValue}.");
-						}
-						else if (chunkLocations.TryGetValue(entry, out var location))
-						{
-							(archiveIndex, fileOffset) = location;
+							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {entry.SmallData.Length} preload bytes, the directory tree can store at most {ushort.MaxValue}.");
 						}
 
-						writer.Write(Encoding.UTF8.GetBytes(entry.FileName));
-						writer.Write(NullByte);
+						WriteNullTerminated(entry.FileName);
 						writer.Write(entry.CRC32);
-						writer.Write((ushort)preloadData.Length);
+						writer.Write((ushort)entry.SmallData.Length);
 						writer.Write(archiveIndex);
 						writer.Write(fileOffset);
-						writer.Write(fileLength);
+						writer.Write(entry.Length);
 						writer.Write(ushort.MaxValue); // terminator, 0xFFFF
-						writer.Write(preloadData);
+						writer.Write(entry.SmallData);
 					}
 
 					writer.Write(NullByte);
@@ -881,26 +994,23 @@ namespace ValvePak
 
 			var treeData = treeStream.GetBuffer().AsSpan(0, (int)treeStream.Length);
 
-			// Archive MD5 section, contains hashes of chunk files
-			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions ?? []);
+			var fractionCount = chunkHashFractions?.Count ?? (int)((embeddedDataOffset + (ChunkHasher.FileFractionSize - 1L)) / ChunkHasher.FileFractionSize);
 
-			using var headerStream = new MemoryStream();
-			using var headerWriter = new BinaryWriter(headerStream);
-			headerWriter.Write(MAGIC);
-			headerWriter.Write(Version);
-			headerWriter.Write(treeData.Length); // TreeSize
+			Span<byte> header = stackalloc byte[Version >= 2 ? 28 : 12];
+			BinaryPrimitives.WriteInt32LittleEndian(header, MAGIC);
+			BinaryPrimitives.WriteUInt32LittleEndian(header[4..], Version);
+			BinaryPrimitives.WriteInt32LittleEndian(header[8..], treeData.Length); // TreeSize
 
 			if (Version >= 2)
 			{
-				headerWriter.Write(embeddedDataOffset); // FileDataSectionSize
-				headerWriter.Write(archiveMd5SectionBytes.Length); // ArchiveMD5SectionSize
-				headerWriter.Write(48); // OtherMD5SectionSize
-				headerWriter.Write(0); // SignatureSectionSize
+				BinaryPrimitives.WriteUInt32LittleEndian(header[12..], embeddedDataOffset); // FileDataSectionSize
+				BinaryPrimitives.WriteInt32LittleEndian(header[16..], fractionCount * ChunkHashFraction.SectionEntrySize); // ArchiveMD5SectionSize
+				BinaryPrimitives.WriteInt32LittleEndian(header[20..], 48); // OtherMD5SectionSize
+				BinaryPrimitives.WriteInt32LittleEndian(header[24..], UnsignedSignatureSectionSize); // SignatureSectionSize
 			}
 
-			var header = headerStream.GetBuffer().AsSpan(0, (int)headerStream.Length);
-
 			using var fullFileMD5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+			using var embeddedDataHashes = new ChunkHasher(DirectoryArchiveIndex);
 
 			void WriteAndHash(ReadOnlySpan<byte> data)
 			{
@@ -913,7 +1023,14 @@ namespace ValvePak
 
 			foreach (var entry in embeddedEntries)
 			{
-				WriteAndHash(GetEntryData(entry));
+				var data = GetEmbeddedData(entry);
+				WriteAndHash(data);
+
+				// Data in the directory file is only hashed in packages without chunk files
+				if (chunkHashFractions == null)
+				{
+					embeddedDataHashes.Append(data);
+				}
 			}
 
 			if (Version < 2)
@@ -922,17 +1039,36 @@ namespace ValvePak
 				return;
 			}
 
+			var archiveMd5SectionBytes = SerializeChunkHashFractions(chunkHashFractions ?? embeddedDataHashes.GetHashFractions(includeEmptyLast: false));
+			Debug.Assert(archiveMd5SectionBytes.Length == fractionCount * ChunkHashFraction.SectionEntrySize);
+
 			WriteAndHash(archiveMd5SectionBytes);
 			WriteAndHash(MD5.HashData(treeData));
 			WriteAndHash(MD5.HashData(archiveMd5SectionBytes));
 
 			stream.Write(fullFileMD5.GetHashAndReset());
+
+			Span<byte> signatureSection = stackalloc byte[UnsignedSignatureSectionSize];
+			BinaryPrimitives.WriteInt32LittleEndian(signatureSection, MAGIC);
+			BinaryPrimitives.WriteInt32LittleEndian(signatureSection[4..], (int)ESignatureType.OnlyFileChecksum);
+			stream.Write(signatureSection);
 		}
 
 		private bool IsReadFile(string path)
 		{
-			return (ReadFilePath != null && PathsEqual(path, ReadFilePath))
-				|| Enumerable.Range(0, HighestChunkIndex + 1).Any(archiveIndex => PathsEqual(path, GetArchiveIndexFullFilePath(GetChunkBaseName(), (ushort)archiveIndex)));
+			if (ReadFilePath != null && PathsEqual(path, ReadFilePath))
+			{
+				return true;
+			}
+
+			if (HighestChunkIndex < 0)
+			{
+				return false;
+			}
+
+			var baseName = GetChunkBaseName();
+
+			return Enumerable.Range(0, HighestChunkIndex + 1).Any(archiveIndex => PathsEqual(path, GetArchiveIndexFullFilePath(baseName, (ushort)archiveIndex)));
 		}
 
 		private static bool PathsEqual(string path1, string path2)
@@ -952,13 +1088,10 @@ namespace ValvePak
 
 			var baseName = GetChunkBaseName();
 			var readFractions = AccessPackFileHashes
-				.Where(static fraction => fraction.ArchiveIndex != 0x7FFF)
+				.Where(static fraction => fraction.ArchiveIndex != DirectoryArchiveIndex)
 				.GroupBy(static fraction => fraction.ArchiveIndex)
 				.ToDictionary(static fractions => fractions.Key, static fractions => fractions.OrderBy(static fraction => fraction.Offset).ToList());
-			var usedArchiveIndices = GetAllEntries()
-				.Where(static entry => entry.Length > 0)
-				.Select(static entry => entry.ArchiveIndex)
-				.ToHashSet();
+			var usedArchiveIndices = GetChunkIndicesWithData().ToHashSet();
 			var hashFractions = new List<ChunkHashFraction>();
 
 			for (var i = 0; i <= HighestChunkIndex; i++)
@@ -995,8 +1128,8 @@ namespace ValvePak
 						throw new InvalidOperationException($"Chunk file {archiveIndex} is {file.Length} bytes, its hashes can only be computed for chunk files smaller than 4 GiB.");
 					}
 
-					using var hashes = new ChunkFileWriter(archiveIndex, filePath: null);
-					ReadArchiveDataInBlocks(archiveIndex, 0, file.Length, hashes.Write);
+					using var hashes = new ChunkHasher(archiveIndex);
+					ReadArchiveDataInBlocks(archiveIndex, 0, file.Length, hashes.Append);
 					fractions = hashes.GetHashFractions();
 					UpdatedChunkHashFractions[archiveIndex] = fractions;
 				}
@@ -1045,18 +1178,19 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Returns the data for an entry that is being written out.
+		/// Returns the data of an entry that is written into the directory file, without its preload bytes.
 		/// </summary>
-		private byte[] GetEntryData(PackageEntry entry)
+		private byte[] GetEmbeddedData(PackageEntry entry)
 		{
-			if (entry.Length == 0)
+			if (entry.PendingData != null)
 			{
-				// Data added by AddFile lives entirely in SmallData, avoid copying it
-				return entry.SmallData;
+				return entry.PendingData;
 			}
 
-			ReadEntry(entry, out var fileData, validateCrc: false);
-			return fileData;
+			var data = new byte[entry.Length];
+			ReadArchiveDataExactly(entry.ArchiveIndex, entry.Offset, data);
+
+			return data;
 		}
 
 		private static byte[] SerializeChunkHashFractions(List<ChunkHashFraction> fractions)
@@ -1078,47 +1212,92 @@ namespace ValvePak
 			return bytes;
 		}
 
+		private readonly record struct ChunkLocation(ushort ArchiveIndex, uint Offset);
+
+		private readonly record struct FileReplacement(string TemporaryPath, string Path);
+
 		/// <summary>
-		/// Writes data for a single chunk file, hashing it in 1 MiB fractions for the archive MD5 section as it is written.
+		/// Writes data for a single chunk file, hashing it for the archive MD5 section as it is written.
 		/// </summary>
 		private sealed class ChunkFileWriter : IDisposable
 		{
-			private const int FileFractionSize = 0x00100000; // 1 MiB
-
-			private readonly FileStream? stream;
-			private readonly IncrementalHash md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-			private readonly List<ChunkHashFraction> fractions = [];
-			private uint fractionOffset;
-			private uint bytesInFraction;
+			private readonly FileStream stream;
+			private readonly ChunkHasher hasher;
 
 			/// <summary>
 			/// Gets the index of this chunk file.
 			/// </summary>
-			public ushort ArchiveIndex { get; }
+			public ushort ArchiveIndex => hasher.ArchiveIndex;
 
 			/// <summary>
 			/// Gets the size in bytes of the data written so far.
 			/// </summary>
-			public uint Length => fractionOffset + bytesInFraction;
+			public uint Length => hasher.Length;
 
 			/// <summary>
 			/// Creates the chunk file.
 			/// </summary>
 			/// <param name="archiveIndex">Index of this chunk file.</param>
-			/// <param name="filePath">Path of the chunk file, or null to only hash the data.</param>
+			/// <param name="filePath">Path of the chunk file.</param>
 			/// <param name="mode">Either <see cref="FileMode.Create"/> to replace an existing file, or <see cref="FileMode.CreateNew"/> to fail if one exists.</param>
-			public ChunkFileWriter(ushort archiveIndex, string? filePath, FileMode mode = FileMode.Create)
+			public ChunkFileWriter(ushort archiveIndex, string filePath, FileMode mode = FileMode.Create)
 			{
-				if (archiveIndex >= 0x7FFF)
-				{
-					throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
-				}
-
-				ArchiveIndex = archiveIndex;
-				stream = filePath == null ? null : new FileStream(filePath, mode, FileAccess.Write, FileShare.Read, bufferSize: 65536);
+				stream = new FileStream(filePath, mode, FileAccess.Write, FileShare.Read, bufferSize: 65536);
+				hasher = new ChunkHasher(archiveIndex);
 			}
 
 			public void Write(ReadOnlySpan<byte> data)
+			{
+				hasher.Append(data);
+				stream.Write(data);
+			}
+
+			public void Flush()
+			{
+				stream.Flush();
+			}
+
+			/// <inheritdoc cref="ChunkHasher.GetHashFractions"/>
+			public List<ChunkHashFraction> GetHashFractions()
+			{
+				return hasher.GetHashFractions();
+			}
+
+			public void Dispose()
+			{
+				stream.Dispose();
+				hasher.Dispose();
+			}
+		}
+
+		/// <summary>
+		/// Hashes the data of a single archive in 1 MiB fractions for the archive MD5 section.
+		/// </summary>
+		private sealed class ChunkHasher : IDisposable
+		{
+			public const int FileFractionSize = 0x00100000; // 1 MiB
+
+			private Blake3.Hasher hasher = Blake3.Hasher.New();
+			private readonly List<ChunkHashFraction> fractions = [];
+			private uint fractionOffset;
+			private uint bytesInFraction;
+
+			/// <summary>
+			/// Gets the index of the archive the hashed data is in.
+			/// </summary>
+			public ushort ArchiveIndex { get; }
+
+			/// <summary>
+			/// Gets the size in bytes of the data hashed so far.
+			/// </summary>
+			public uint Length => fractionOffset + bytesInFraction;
+
+			public ChunkHasher(ushort archiveIndex)
+			{
+				ArchiveIndex = archiveIndex;
+			}
+
+			public void Append(ReadOnlySpan<byte> data)
 			{
 				// Offsets and lengths in the directory tree are 32-bit
 				if ((long)Length + data.Length > uint.MaxValue)
@@ -1126,47 +1305,42 @@ namespace ValvePak
 					throw new InvalidOperationException($"Chunk file {ArchiveIndex} would exceed 4 GiB.");
 				}
 
-				stream?.Write(data);
-
 				while (!data.IsEmpty)
 				{
 					var length = Math.Min(FileFractionSize - (int)bytesInFraction, data.Length);
-					md5.AppendData(data[..length]);
+					hasher.Update(data[..length]);
 					bytesInFraction += (uint)length;
 					data = data[length..];
 
 					if (bytesInFraction == FileFractionSize)
 					{
-						fractions.Add(CreateFraction(md5.GetHashAndReset()));
+						fractions.Add(CreateFraction());
+						hasher.Reset();
 						fractionOffset += bytesInFraction;
 						bytesInFraction = 0;
 					}
 				}
 			}
 
-			public void Flush()
-			{
-				stream?.Flush();
-			}
-
 			/// <summary>
 			/// Returns the hashes of the data written so far. The last fraction covers the data after the last full fraction,
 			/// and is zero sized when the chunk file size is an exact multiple of the fraction size.
 			/// </summary>
-			public List<ChunkHashFraction> GetHashFractions()
+			/// <param name="includeEmptyLast">If false, a zero sized last fraction is left out.</param>
+			public List<ChunkHashFraction> GetHashFractions(bool includeEmptyLast = true)
 			{
-				var allFractions = new List<ChunkHashFraction>(fractions);
-				allFractions.Add(CreateFraction(md5.GetCurrentHash()));
-
-				return allFractions;
+				return bytesInFraction > 0 || includeEmptyLast ? [.. fractions, CreateFraction()] : [.. fractions];
 			}
 
-			private ChunkHashFraction CreateFraction(byte[] checksum)
+			private ChunkHashFraction CreateFraction()
 			{
+				var checksum = new byte[16];
+				hasher.Finalize(checksum);
+
 				return new ChunkHashFraction
 				{
 					ArchiveIndex = ArchiveIndex,
-					HashType = EHashType.MD5,
+					HashType = EHashType.Blake3,
 					Offset = fractionOffset,
 					Length = bytesInFraction,
 					Checksum = checksum,
@@ -1175,8 +1349,7 @@ namespace ValvePak
 
 			public void Dispose()
 			{
-				stream?.Dispose();
-				md5.Dispose();
+				hasher.Dispose();
 			}
 		}
 	}
