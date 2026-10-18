@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using TUnit.Assertions.Enums;
@@ -167,6 +168,102 @@ namespace ValvePak.Test
 			using var output = new MemoryStream();
 			await Assert.That(() => package.Write(output)).ThrowsExactly<InvalidOperationException>()
 				.WithMessage("This package was opened from a _dir.vpk, writing back is currently unsupported.", StringComparison.Ordinal);
+		}
+
+		[Test]
+		[Arguments(StringComparison.Ordinal)]
+		[Arguments(StringComparison.OrdinalIgnoreCase)]
+		public async Task NormalizesPathsTheSameWhenAddingAndFinding(StringComparison comparison)
+		{
+			using var package = new Package();
+			package.OptimizeEntriesForBinarySearch(comparison);
+
+			var entry = package.AddFile("\\Materials//./Models/./Crate.VMAT_C/", Encoding.UTF8.GetBytes("crate"));
+			var noExtension = package.AddFile("./readme.", []);
+			var trailingDots = package.AddFile("notes..", [1]);
+			var trailingDotAfterExtension = package.AddFile("archive.tar.", [2]);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(entry.DirectoryName).IsEqualTo("materials/models");
+				await Assert.That(entry.FileName).IsEqualTo("crate");
+				await Assert.That(entry.TypeName).IsEqualTo("vmat_c");
+				await Assert.That(noExtension.DirectoryName).IsEqualTo(" ");
+				await Assert.That(noExtension.TypeName).IsEqualTo(" ");
+				await Assert.That(package.FindEntry("materials/models/crate.vmat_c")).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("/materials\\models//crate.vmat_c")).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("./materials/./models/crate.vmat_c/".AsSpan())).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("readme")).IsEqualTo(noExtension);
+				await Assert.That(package.FindEntry("/readme.")).IsEqualTo(noExtension);
+				await Assert.That(trailingDots.FileName).IsEqualTo("notes");
+				await Assert.That(trailingDots.TypeName).IsEqualTo(" ");
+				await Assert.That(trailingDotAfterExtension.FileName).IsEqualTo("archive");
+				await Assert.That(trailingDotAfterExtension.TypeName).IsEqualTo("tar");
+
+				foreach (var added in new[] { entry, noExtension, trailingDots, trailingDotAfterExtension })
+				{
+					await Assert.That(package.FindEntry(added.GetFullPath())).IsEqualTo(added);
+				}
+			}
+		}
+
+		[Test]
+		[Arguments(false)]
+		[Arguments(true)]
+		public async Task FindsReadEntriesWhoseNamesAreNotNormalized(bool optimize)
+		{
+			(string Directory, string File, string Type)[] names =
+			[
+				("a//b", "file", "txt"),
+				("a/./b", "file", "txt"),
+				("./rel", "file", "txt"),
+				("/leading", "file", "txt"),
+				("trailing/", "file", "txt"),
+				("back\\slash", "file", "txt"),
+				(" ", "has.dot", " "),
+				("dir", "noext.", " "),
+				(" ", "archive", "tar.gz"),
+				("dir", "archive.tar", "gz"),
+			];
+
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				for (var i = 0; i < names.Length; i++)
+				{
+					var entry = package.AddFile($"file{i}.txt", [(byte)i]);
+					(entry.DirectoryName, entry.FileName, entry.TypeName) = names[i];
+				}
+
+				package.Write(output);
+			}
+
+			output.Position = 0;
+
+			using var readBack = new Package();
+
+			if (optimize)
+			{
+				readBack.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
+			}
+
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+
+			var entries = readBack.Entries!.Values.SelectMany(static entries => entries).ToList();
+			await Assert.That(entries).Count().IsEqualTo(names.Length);
+
+			foreach (var entry in entries)
+			{
+				await Assert.That(readBack.FindEntry(entry.GetFullPath())).IsSameReferenceAs(entry);
+			}
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(readBack.FindEntry("dir/noext")).IsNull();
+				await Assert.That(readBack.FindEntry("has")).IsNull();
+			}
 		}
 
 		[Test]

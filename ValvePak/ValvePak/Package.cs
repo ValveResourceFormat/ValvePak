@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading;
 
 namespace ValvePak
@@ -252,16 +253,13 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
 		/// <remarks>
-		/// Normalizes the directory path separator from <see cref="WindowsDirectorySeparator"/> (\) to <see cref="DirectorySeparator"/> (/) in <paramref name="filePath"/>.
+		/// The path is normalized the same way as paths of added files, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
 		/// </remarks>
 		public PackageEntry? FindEntry(string filePath)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 
-			// Normalize path separators when reading the file list
-			var filePathSpan = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar).AsSpan();
-
-			return FindEntry(filePathSpan);
+			return FindEntry(filePath.AsSpan());
 		}
 
 		/// <summary>
@@ -272,40 +270,55 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
 		/// <remarks>
-		/// Unlike the <see cref="FindEntry(string)"/> version, this one does not normalize the directory path separator.
+		/// The path is normalized the same way as paths of added files: <see cref="WindowsDirectorySeparator"/> (\) becomes <see cref="DirectorySeparator"/> (/),
+		/// empty and "." segments and trailing dots are removed, and a missing directory or extension is a space.
+		/// If that finds no entry, the path is also looked up as it is, split at its last <see cref="DirectorySeparator"/> and at each dot of the file name,
+		/// which finds entries of read packages whose names normalizing changes.
 		/// </remarks>
 		public PackageEntry? FindEntry(ReadOnlySpan<char> filePath)
 		{
-			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
-			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
-			var fileName = filePath[(lastSeparator + 1)..];
+			SplitPath(NormalizePath(filePath, out var changed), out var directory, out var fileName, out var extension);
 
-			var dot = fileName.LastIndexOf('.');
-			string extension;
+			return FindEntry(directory, fileName, extension) ?? FindEntryByStoredName(filePath, changed ? -1 : fileName.Length);
+		}
 
-			if (dot > -1)
+		/// <summary>
+		/// Finds the entry whose <see cref="PackageEntry.GetFullPath"/> is the given path, trying each split of the file name into a file and type name.
+		/// </summary>
+		/// <param name="path">The path as it was given.</param>
+		/// <param name="skipSplit">Position in the file name that was already looked up, where the length of the file name means without a type, or -1.</param>
+		private PackageEntry? FindEntryByStoredName(ReadOnlySpan<char> path, int skipSplit)
+		{
+			var lastSeparator = path.LastIndexOf(DirectorySeparatorChar);
+			var directory = lastSeparator > -1 ? path[..lastSeparator] : Space;
+			var name = path[(lastSeparator + 1)..];
+			PackageEntry? entry = null;
+
+			for (var split = 1; entry == null && split <= name.Length; split++)
 			{
-				extension = fileName[(dot + 1)..].ToString();
-				fileName = fileName[..dot];
-			}
-			else
-			{
-				// Valve uses a space for missing extensions
-				extension = Space;
+				if (split == skipSplit)
+				{
+					continue;
+				}
+
+				if (split == name.Length)
+				{
+					entry = FindEntry(directory, name, Space);
+				}
+				else if (name[split] == '.' && split < name.Length - 1)
+				{
+					entry = FindEntry(directory, name[..split], name[(split + 1)..]);
+				}
 			}
 
-			if (Entries == null || !Entries.TryGetValue(extension, out var entriesForExtension))
+			return entry;
+		}
+
+		private PackageEntry? FindEntry(ReadOnlySpan<char> directory, ReadOnlySpan<char> fileName, ReadOnlySpan<char> extension)
+		{
+			if (Entries == null || !Entries.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(extension, out var entriesForExtension))
 			{
 				return default;
-			}
-
-			// Remove the trailing and leading slash
-			directory = directory.Trim(DirectorySeparatorChar);
-
-			// If the directory is empty after trimming, set it to a space to match Valve's behaviour
-			if (directory.Length == 0)
-			{
-				directory = Space;
 			}
 
 			int hi = entriesForExtension.Count - 1;
@@ -370,6 +383,89 @@ namespace ValvePak
 			}
 
 			return default;
+		}
+
+		/// <summary>
+		/// Replaces <see cref="WindowsDirectorySeparator"/> with <see cref="DirectorySeparatorChar"/>, removes empty and "." segments, and removes trailing dots.
+		/// </summary>
+		private static ReadOnlySpan<char> NormalizePath(ReadOnlySpan<char> path, out bool changed)
+		{
+			changed = !IsNormalizedPath(path);
+
+			if (!changed)
+			{
+				return path;
+			}
+
+			var builder = new StringBuilder(path.Length);
+
+			foreach (var range in path.SplitAny(DirectorySeparatorChar, WindowsDirectorySeparator))
+			{
+				var segment = path[range];
+
+				if (IsSkippedSegment(segment))
+				{
+					continue;
+				}
+
+				if (builder.Length > 0)
+				{
+					builder.Append(DirectorySeparatorChar);
+				}
+
+				builder.Append(segment);
+			}
+
+			var length = builder.Length;
+
+			while (length > 0 && builder[length - 1] == '.')
+			{
+				length--;
+			}
+
+			return builder.ToString(0, length);
+		}
+
+		private static bool IsNormalizedPath(ReadOnlySpan<char> path)
+		{
+			if (path.Contains(WindowsDirectorySeparator))
+			{
+				return false;
+			}
+
+			foreach (var range in path.Split(DirectorySeparatorChar))
+			{
+				if (IsSkippedSegment(path[range]))
+				{
+					return false;
+				}
+			}
+
+			return !path.EndsWith('.');
+		}
+
+		private static bool IsSkippedSegment(ReadOnlySpan<char> segment)
+		{
+			return segment.IsEmpty || segment is Dot;
+		}
+
+		/// <summary>
+		/// Splits a normalized path into the directory, file and type names of an entry, using a space for a missing directory or extension.
+		/// </summary>
+		private static void SplitPath(ReadOnlySpan<char> path, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> extension)
+		{
+			var lastSeparator = path.LastIndexOf(DirectorySeparatorChar);
+			directory = lastSeparator > -1 ? path[..lastSeparator] : Space;
+			fileName = path[(lastSeparator + 1)..];
+
+			var dot = fileName.LastIndexOf('.');
+			extension = Space;
+
+			if (dot > -1)
+			{
+				extension = fileName[(dot + 1)..];
+				fileName = fileName[..dot];
+			}
 		}
 
 		/// <summary>

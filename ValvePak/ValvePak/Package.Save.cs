@@ -75,11 +75,11 @@ namespace ValvePak
 
 		/// <summary>
 		/// Moves an entry in current package to a new path. Only the directory tree changes, the file data is not touched.
-		/// The path is lowercased like Valve's packer does.
+		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
 		/// </summary>
 		/// <param name="entry">The package entry to rename.</param>
 		/// <param name="newFilePath">Full new file path for this entry.</param>
-		/// <exception cref="ArgumentException">The entry is not in this package, another entry already has the new path ignoring case, or the new path has an empty file name or extension or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The entry is not in this package, another entry already has the new path ignoring case, or the new path has an empty file name or contains a null character.</exception>
 		public void RenameFile(PackageEntry entry, string newFilePath)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -127,7 +127,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is lowercased like Valve's packer does.
+		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
@@ -136,7 +136,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -161,7 +161,7 @@ namespace ValvePak
 		/// <summary>
 		/// Add file to current package, reading its data from the current position of the stream to its end.
 		/// Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is lowercased like Valve's packer does.
+		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
@@ -170,7 +170,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
 		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -310,7 +310,7 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Creates an entry with the directory, file and type names split from the given path.
+		/// Creates an entry with the directory, file and type names split from the normalized path.
 		/// </summary>
 		private static PackageEntry CreateEntry(string filePath, string paramName)
 		{
@@ -334,46 +334,21 @@ namespace ValvePak
 				throw new ArgumentException($"'{filePath}' contains a null character.", paramName);
 			}
 
-			filePath = ToLowerAscii(filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar));
+			SplitPath(NormalizePath(filePath, out _), out var directory, out var fileName, out var extension);
 
-			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
-			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
-			var fileName = filePath[(lastSeparator + 1)..];
-
-			var dot = fileName.LastIndexOf('.');
-			string extension;
-
-			if (dot > -1)
+			if (fileName.IsEmpty)
 			{
-				extension = fileName[(dot + 1)..];
-				fileName = fileName[..dot];
-			}
-			else
-			{
-				// Valve uses a space for missing extensions
-				extension = Space;
+				throw new ArgumentException($"'{filePath}' has an empty file name.", paramName);
 			}
 
-			if (fileName.Length == 0 || extension.Length == 0)
-			{
-				throw new ArgumentException($"'{filePath}' has an empty file name or extension.", paramName);
-			}
-
-			directory = directory.Trim(DirectorySeparatorChar);
-
-			if (directory.Length == 0)
-			{
-				directory = Space;
-			}
-
-			return (directory, fileName, extension);
+			return (ToLowerAscii(directory), ToLowerAscii(fileName), ToLowerAscii(extension));
 		}
 
-		private static string ToLowerAscii(string value)
+		private static string ToLowerAscii(ReadOnlySpan<char> value)
 		{
-			if (!value.AsSpan().ContainsAnyInRange('A', 'Z'))
+			if (!value.ContainsAnyInRange('A', 'Z'))
 			{
-				return value;
+				return value.ToString();
 			}
 
 			return string.Create(value.Length, value, static (span, source) =>
