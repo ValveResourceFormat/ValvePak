@@ -288,13 +288,22 @@ namespace ValvePak
 					}
 				}
 
+				// Types that differ only in case share a list when the dictionary is case insensitive
+				if (typeEntries.TryGetValue(typeName, out var existingEntries))
+				{
+					existingEntries.AddRange(entries);
+					entries = existingEntries;
+				}
+				else
+				{
+					typeEntries.Add(typeName, entries);
+				}
+
 				if (Comparer != null)
 				{
 					// Sorting at the end is faster than doing BinarySearch+Insert
 					entries.Sort(Comparer);
 				}
-
-				typeEntries.Add(typeName, entries);
 			}
 
 			return typeEntries;

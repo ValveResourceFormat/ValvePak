@@ -22,7 +22,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Gets or sets the file extension.
-		/// If the file has no extension, this is an empty string.
+		/// If the file has no extension, this is a single space.
 		/// </summary>
 		public required string TypeName { get; set; }
 

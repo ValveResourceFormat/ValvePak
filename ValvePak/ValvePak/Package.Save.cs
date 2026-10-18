@@ -72,7 +72,33 @@ namespace ValvePak
 		}
 
 		/// <summary>
+		/// Moves an entry in current package to a new path. Only the directory tree changes, the file data is not touched.
+		/// Be careful to not move it onto the path of another entry, because this does not check for duplicates.
+		/// The path is lowercased like Valve's packer does.
+		/// </summary>
+		/// <param name="entry">The package entry to rename.</param>
+		/// <param name="newFilePath">Full new file path for this entry.</param>
+		/// <exception cref="ArgumentException">The entry is not in this package, or the new path has an empty file name or extension or contains a null character.</exception>
+		public void RenameFile(PackageEntry entry, string newFilePath)
+		{
+			ArgumentNullException.ThrowIfNull(entry);
+			ArgumentNullException.ThrowIfNull(newFilePath);
+
+			var (directoryName, fileName, typeName) = ParseEntryPath(newFilePath, nameof(newFilePath));
+
+			if (!RemoveFile(entry))
+			{
+				throw new ArgumentException("The entry is not in this package.", nameof(entry));
+			}
+
+			(entry.DirectoryName, entry.FileName, entry.TypeName) = (directoryName, fileName, typeName);
+
+			InsertEntry(entry);
+		}
+
+		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
+		/// The path is lowercased like Valve's packer does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
@@ -81,27 +107,31 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
+		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 			ArgumentNullException.ThrowIfNull(fileData);
 
+			var entry = CreateEntry(filePath, nameof(filePath));
+
 			// Files with no data are only ever written into the directory file
 			if (!multiChunk || fileData.Length == 0)
 			{
-				return AddFileToDirectoryFile(filePath, fileData);
+				return AddFileToDirectoryFile(entry, fileData);
 			}
 
 			var chunkFile = GetChunkFileForNextFile();
 			var offset = chunkFile.Length;
 			chunkFile.Write(fileData);
 
-			return AddChunkFileEntry(filePath, chunkFile, offset, Crc32.HashToUInt32(fileData));
+			return AddChunkFileEntry(entry, chunkFile, offset, Crc32.HashToUInt32(fileData));
 		}
 
 		/// <summary>
 		/// Add file to current package, reading its data from the current position of the stream to its end.
 		/// Be careful to not add duplicate entries, because this does not check for duplicates.
+		/// The path is lowercased like Valve's packer does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
@@ -110,14 +140,17 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
+		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
 		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 			ArgumentNullException.ThrowIfNull(fileData);
 
+			var entry = CreateEntry(filePath, nameof(filePath));
+
 			if (!multiChunk)
 			{
-				return AddFileToDirectoryFile(filePath, ReadToEnd(fileData));
+				return AddFileToDirectoryFile(entry, ReadToEnd(fileData));
 			}
 
 			var buffer = ArrayPool<byte>.Shared.Rent(AddFileBufferSize);
@@ -129,7 +162,7 @@ namespace ValvePak
 				if (bytesRead == 0)
 				{
 					// Files with no data are only ever written into the directory file
-					return AddFileToDirectoryFile(filePath, []);
+					return AddFileToDirectoryFile(entry, []);
 				}
 
 				var chunkFile = GetChunkFileForNextFile();
@@ -146,7 +179,7 @@ namespace ValvePak
 				}
 				while (bytesRead > 0);
 
-				return AddChunkFileEntry(filePath, chunkFile, offset, crc.GetCurrentHashAsUInt32());
+				return AddChunkFileEntry(entry, chunkFile, offset, crc.GetCurrentHashAsUInt32());
 			}
 			finally
 			{
@@ -176,9 +209,8 @@ namespace ValvePak
 		/// <summary>
 		/// Adds an entry whose data is kept in memory until it is written into the directory file.
 		/// </summary>
-		private PackageEntry AddFileToDirectoryFile(string filePath, byte[] fileData)
+		private PackageEntry AddFileToDirectoryFile(PackageEntry entry, byte[] fileData)
 		{
-			var entry = CreateEntry(filePath);
 			entry.SmallData = fileData;
 			entry.CRC32 = Crc32.HashToUInt32(fileData);
 			entry.ArchiveIndex = 0x7FFF;
@@ -191,12 +223,11 @@ namespace ValvePak
 		/// <summary>
 		/// Adds an entry for the data that was written to the chunk file since it was at the given offset.
 		/// </summary>
-		private PackageEntry AddChunkFileEntry(string filePath, ChunkFileWriter chunkFile, uint offset, uint crc)
+		private PackageEntry AddChunkFileEntry(PackageEntry entry, ChunkFileWriter chunkFile, uint offset, uint crc)
 		{
 			// Hand the data to the OS so the entry can be read back before the package is written
 			chunkFile.Flush();
 
-			var entry = CreateEntry(filePath);
 			entry.CRC32 = crc;
 			entry.ArchiveIndex = chunkFile.ArchiveIndex;
 			entry.Offset = offset;
@@ -248,11 +279,31 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Creates an entry with the directory, file and type names split from the given path.
+		/// Creates an entry with the lowercased directory, file and type names split from the given path.
 		/// </summary>
-		private static PackageEntry CreateEntry(string filePath)
+		private static PackageEntry CreateEntry(string filePath, string paramName)
 		{
-			filePath = filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar);
+			var (directoryName, fileName, typeName) = ParseEntryPath(filePath, paramName);
+
+			return new PackageEntry
+			{
+				DirectoryName = directoryName,
+				FileName = fileName,
+				TypeName = typeName,
+			};
+		}
+
+		/// <summary>
+		/// Splits the given path into lowercased directory, file and type names.
+		/// </summary>
+		private static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath, string paramName)
+		{
+			if (filePath.Contains('\0', StringComparison.Ordinal))
+			{
+				throw new ArgumentException($"'{filePath}' contains a null character.", paramName);
+			}
+
+			filePath = ToLowerAscii(filePath.Replace(WindowsDirectorySeparator, DirectorySeparatorChar));
 
 			var lastSeparator = filePath.LastIndexOf(DirectorySeparatorChar);
 			var directory = lastSeparator > -1 ? filePath[..lastSeparator] : string.Empty;
@@ -272,17 +323,39 @@ namespace ValvePak
 				extension = Space;
 			}
 
+			if (fileName.Length == 0 || extension.Length == 0)
+			{
+				throw new ArgumentException($"'{filePath}' has an empty file name or extension.", paramName);
+			}
+
+			directory = directory.Trim(DirectorySeparatorChar);
+
 			if (directory.Length == 0)
 			{
 				directory = Space;
 			}
 
-			return new PackageEntry
+			return (directory, fileName, extension);
+		}
+
+		/// <summary>
+		/// Lowercases only ASCII letters, the same as the game does to the paths it looks up.
+		/// </summary>
+		private static string ToLowerAscii(string value)
+		{
+			if (!value.AsSpan().ContainsAnyInRange('A', 'Z'))
 			{
-				FileName = fileName,
-				DirectoryName = directory,
-				TypeName = extension,
-			};
+				return value;
+			}
+
+			return string.Create(value.Length, value, static (span, source) =>
+			{
+				for (var i = 0; i < source.Length; i++)
+				{
+					var c = source[i];
+					span[i] = c is >= 'A' and <= 'Z' ? (char)(c | 0x20) : c;
+				}
+			});
 		}
 
 		/// <summary>
@@ -337,9 +410,11 @@ namespace ValvePak
 				}
 			}
 
-			using var fs = new FileStream(filename, FileMode.Create, FileAccess.Write, FileShare.None);
+			using var fs = new FileStream(filename, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
 
 			Write(fs);
+
+			fs.SetLength(fs.Position);
 		}
 
 		/// <summary>
@@ -365,14 +440,22 @@ namespace ValvePak
 
 			var tree = new Dictionary<string, Dictionary<string, List<PackageEntry>>>();
 
-			// Group the entries by type and directory
+			// Group the entries by their own type and directory, types that differ only in case share one list in a case insensitive Entries
 			foreach (var typeEntries in Entries ?? [])
 			{
-				var typeTree = new Dictionary<string, List<PackageEntry>>();
-				tree[typeEntries.Key] = typeTree;
-
 				foreach (var entry in typeEntries.Value)
 				{
+					if (entry.FileName.Length == 0 || entry.TypeName.Length == 0)
+					{
+						throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has an empty file name or extension, which the directory tree can not store.");
+					}
+
+					if (!tree.TryGetValue(entry.TypeName, out var typeTree))
+					{
+						typeTree = [];
+						tree[entry.TypeName] = typeTree;
+					}
+
 					var directoryName = entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
 
 					if (!typeTree.TryGetValue(directoryName, out var directoryEntries))
