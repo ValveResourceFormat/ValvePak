@@ -1,9 +1,12 @@
 using System;
 using System.IO;
+using System.IO.Hashing;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using TUnit.Assertions.Enums;
+using TUnit.Core.Enums;
 
 namespace ValvePak.Test
 {
@@ -368,6 +371,9 @@ namespace ValvePak.Test
 		{
 			var dirPath = TempPath("streamed_dir.vpk");
 
+			// A package that was not read replaces existing chunk files
+			await File.WriteAllBytesAsync(TempPath("streamed_000.vpk"), new byte[4096]);
+
 			using var package = new Package();
 			package.SetFileName(dirPath);
 			package.WriteChunkSize = 1024;
@@ -497,9 +503,189 @@ namespace ValvePak.Test
 			await Assert.That(() => package.WriteChunkSize = -1).ThrowsExactly<ArgumentOutOfRangeException>();
 		}
 
+		[Test]
+		public async Task WriteRefusesFilesItReadsFromAndMissingChunkFiles()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalDir = await File.ReadAllBytesAsync(dirPath);
+
+			using (var package = new Package())
+			{
+				package.Read(dirPath);
+
+				foreach (var path in new[] { dirPath, TempPath("test_000.vpk") })
+				{
+					using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+					await Assert.That(() => package.Write(stream)).ThrowsExactly<InvalidOperationException>();
+				}
+			}
+
+			using var memoryPackage = new Package();
+			var input = ReadFromMemory(memoryPackage, dirPath);
+			await Assert.That(() => memoryPackage.Write(input)).ThrowsExactly<InvalidOperationException>();
+
+			File.Delete(TempPath("test_000.vpk"));
+
+			await Assert.That(() => memoryPackage.Write(dirPath)).ThrowsExactly<FileNotFoundException>();
+			await Assert.That(await File.ReadAllBytesAsync(dirPath)).IsEquivalentTo(originalDir, CollectionOrdering.Matching);
+		}
+
+		[Test]
+		public async Task EditsReadPackageWithChunkFiles()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalChunk = await File.ReadAllBytesAsync(TempPath("test_000.vpk"));
+			var stale = CreateTestData(100, 9);
+			var preload = CreateTestData(10, 7);
+
+			// Chunk files that the directory file does not refer to are skipped
+			await File.WriteAllBytesAsync(TempPath("test_001.vpk"), stale);
+			await File.WriteAllBytesAsync(TempPath("test_003.vpk"), stale);
+
+			using (var package = new Package())
+			{
+				ReadFromMemory(package, dirPath);
+				package.WriteChunkSize = 400;
+				package.RemoveFile(package.FindEntry("steammessages_base.proto")!);
+
+				var replaced = package.AddFile("steammessages_base.proto", CreateTestData(500, 3), multiChunk: true);
+				replaced.SmallData = preload;
+				replaced.CRC32 = Crc32.HashToUInt32([.. preload, .. CreateTestData(500, 3)]);
+				var second = package.AddFile("added/second.bin", CreateTestData(100, 4), multiChunk: true);
+				package.AddFile("added/embedded.bin", CreateTestData(300, 2));
+
+				using (Assert.Multiple())
+				{
+					await Assert.That(replaced.ArchiveIndex).IsEqualTo((ushort)2);
+					await Assert.That(second.ArchiveIndex).IsEqualTo((ushort)4);
+				}
+
+				package.Write(dirPath);
+			}
+
+			// Data of removed files stays in the chunk file it is in
+			using (Assert.Multiple())
+			{
+				await Assert.That(await File.ReadAllBytesAsync(TempPath("test_000.vpk"))).IsEquivalentTo(originalChunk, CollectionOrdering.Matching);
+				await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(6);
+			}
+
+			using (var readBack = new Package())
+			{
+				readBack.Read(dirPath);
+
+				await AssertPackageVerifies(readBack);
+				await AssertEntryData(readBack, "added/second.bin", 100, 4);
+				await AssertEntryData(readBack, "added/embedded.bin", 300, 2);
+				await Assert.That(readBack.FindEntry("steammessages_base.proto")!.SmallData).Count().IsEqualTo(preload.Length);
+
+				// The read chunk file had no hashes
+				await Assert.That(readBack.AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex).ToArray()).IsEquivalentTo(new ushort[] { 2, 4 }, CollectionOrdering.Matching);
+			}
+
+			// Hashes that cover the whole chunk file are kept even when its data changed, and are computed again once it grew
+			await File.WriteAllBytesAsync(TempPath("test_004.vpk"), stale);
+			await Assert.That(() => WriteFromMemoryAndVerifyChunkHashes(dirPath)).ThrowsExactly<InvalidDataException>();
+
+			await File.AppendAllTextAsync(TempPath("test_004.vpk"), "grown");
+			await Assert.That(() => WriteFromMemoryAndVerifyChunkHashes(dirPath)).ThrowsNothing();
+		}
+
+		[Test]
+		public async Task WritesOverTheFileItWasReadFrom()
+		{
+			var path = CopyFixtures("preload.vpk");
+
+			using (var package = new Package())
+			{
+				package.Read(path);
+				package.AddFile("added.bin", CreateTestData(300, 2));
+				package.AddFile("chunked.bin", CreateTestData(500, 3), multiChunk: true);
+				package.Write(path);
+
+				// The package reads from the written file, where the data of every entry has moved
+				await AssertPackageVerifies(package);
+
+				package.Write(path);
+			}
+
+			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(2);
+
+			using var readBack = new Package();
+			readBack.Read(path);
+
+			await AssertPackageVerifies(readBack);
+			await AssertEntryData(readBack, "added.bin", 300, 2);
+			await AssertEntryData(readBack, "chunked.bin", 500, 3);
+		}
+
+		[Test]
+		[RunOn(OS.Windows)]
+		public async Task WritesOtherFilesInPlaceAndKeepsTheReadFileWhenItCanNotBeReplaced()
+		{
+			var path = CopyFixtures("preload.vpk");
+			var original = await File.ReadAllBytesAsync(path);
+			var otherPath = TempPath("other.vpk");
+			await File.WriteAllBytesAsync(otherPath, new byte[4096]);
+			File.SetAttributes(otherPath, FileAttributes.Hidden);
+
+			using var package = new Package();
+			package.Read(path);
+			package.AddFile("added.bin", CreateTestData(300, 2));
+
+			File.SetAttributes(path, FileAttributes.ReadOnly);
+			await Assert.That(() => package.Write(path)).ThrowsExactly<UnauthorizedAccessException>();
+			File.SetAttributes(path, FileAttributes.Normal);
+
+			package.Write(otherPath);
+
+			using var readBack = new Package();
+			readBack.Read(otherPath);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(await File.ReadAllBytesAsync(path)).IsEquivalentTo(original, CollectionOrdering.Matching);
+				await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(2);
+				await Assert.That(File.GetAttributes(otherPath).HasFlag(FileAttributes.Hidden)).IsTrue();
+				await Assert.That(() => readBack.VerifyFileChecksums()).ThrowsNothing();
+			}
+		}
+
 		private string TempPath(string fileName)
 		{
 			return Path.Combine(TempDirectory, fileName);
+		}
+
+		private string CopyFixtures(params string[] fileNames)
+		{
+			foreach (var fileName in fileNames)
+			{
+				File.Copy(Path.Combine(AppContext.BaseDirectory, "Files", fileName), TempPath(fileName));
+			}
+
+			return TempPath(fileNames[0]);
+		}
+
+		private static MemoryStream ReadFromMemory(Package package, string dirPath)
+		{
+			var input = new MemoryStream(File.ReadAllBytes(dirPath));
+			package.SetFileName(dirPath);
+			package.Read(input);
+
+			return input;
+		}
+
+		private static void WriteFromMemoryAndVerifyChunkHashes(string dirPath)
+		{
+			using (var package = new Package())
+			{
+				ReadFromMemory(package, dirPath);
+				package.Write(dirPath);
+			}
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+			readBack.VerifyChunkHashes();
 		}
 
 		private static async Task AssertPackageVerifies(Package package)

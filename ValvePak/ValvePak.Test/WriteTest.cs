@@ -158,19 +158,6 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		public async Task WriteThrowsWhenIsDirVPK()
-		{
-			var path = Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk");
-
-			using var package = new Package();
-			package.Read(path);
-
-			using var output = new MemoryStream();
-			await Assert.That(() => package.Write(output)).ThrowsExactly<InvalidOperationException>()
-				.WithMessage("This package was opened from a _dir.vpk, writing back is currently unsupported.", StringComparison.Ordinal);
-		}
-
-		[Test]
 		[Arguments(StringComparison.Ordinal)]
 		[Arguments(StringComparison.OrdinalIgnoreCase)]
 		public async Task NormalizesPathsTheSameWhenAddingAndFinding(StringComparison comparison)

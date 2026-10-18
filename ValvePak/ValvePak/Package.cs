@@ -34,6 +34,8 @@ namespace ValvePak
 		/// </summary>
 		private long StreamOffset;
 
+		private string? ReadFilePath;
+
 		private readonly ConcurrentDictionary<ushort, Archive> Archives = new();
 		private readonly Lock ArchivesLock = new();
 
@@ -185,7 +187,7 @@ namespace ValvePak
 
 		private void ThrowIfAlreadyRead()
 		{
-			if (Reader != null)
+			if (Reader != null || IsReadPackage)
 			{
 				throw new InvalidOperationException("This package has already been read, create a new instance to read another package.");
 			}
@@ -197,6 +199,18 @@ namespace ValvePak
 			{
 				throw new InvalidOperationException("Files were added to this package, create a new instance to read a package.");
 			}
+		}
+
+		private void ThrowIfDirectoryFileClosed()
+		{
+			if (Reader != null)
+			{
+				return;
+			}
+
+			throw new InvalidOperationException(ReadFilePath == null
+				? "The package has not been read."
+				: $"The directory file '{ReadFilePath}' could not be opened again after writing, so data in it can not be read.");
 		}
 
 		private Dictionary<string, List<PackageEntry>> CreateEntriesDictionary()
@@ -216,7 +230,7 @@ namespace ValvePak
 			ArgumentNullException.ThrowIfNull(fileName);
 			ThrowIfAlreadyRead();
 
-			if (CurrentChunkFile != null)
+			if (ChunkBaseName != null)
 			{
 				throw new InvalidOperationException("The file name can not be changed after files were added to chunk files.");
 			}

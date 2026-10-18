@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Hashing;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -23,6 +24,7 @@ namespace ValvePak
 		public void Read(string filename)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
+			ThrowIfAlreadyRead();
 			ThrowIfFilesAdded();
 
 			SetFileName(filename);
@@ -53,7 +55,48 @@ namespace ValvePak
 			}
 
 			StreamOffset = input.Position;
+
+			ReadHeader(input);
+			ReadEntries();
+			ReadSections();
+
+			IsReadPackage = true;
+			HighestChunkIndex = GetAllEntries()
+				.Where(static entry => entry.Length > 0)
+				.Select(static entry => entry.ArchiveIndex)
+				.Concat(AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex))
+				.Where(static archiveIndex => archiveIndex != 0x7FFF)
+				.Max(static archiveIndex => (int?)archiveIndex) ?? -1;
+		}
+
+		/// <summary>
+		/// Opens the directory file at the given path instead of the one read before, keeping the current <see cref="Entries"/>.
+		/// </summary>
+		private void ReopenDirectoryFile(string path)
+		{
+			CloseDirectoryFile();
+			ReadFilePath = path;
+
+			var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+			try
+			{
+				StreamOffset = 0;
+				ReadHeader(input);
+				input.Position = HeaderSize + TreeSize;
+				ReadSections();
+			}
+			catch
+			{
+				CloseDirectoryFile();
+				throw;
+			}
+		}
+
+		private void ReadHeader(Stream input)
+		{
 			Reader = new BinaryReader(input);
+			ReadFilePath = (input as FileStream)?.Name;
 
 			if (Reader.ReadUInt32() != MAGIC)
 			{
@@ -65,7 +108,10 @@ namespace ValvePak
 
 			if (version == 1)
 			{
-				// Nothing else
+				FileDataSectionSize = 0;
+				ArchiveMD5SectionSize = 0;
+				OtherMD5SectionSize = 0;
+				SignatureSectionSize = 0;
 			}
 			else if (version == 2)
 			{
@@ -98,18 +144,18 @@ namespace ValvePak
 			{
 				Archives[0x7FFF] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
 			}
+		}
 
-			ReadEntries();
+		private void ReadSections()
+		{
+			Debug.Assert(Reader != null);
 
-			if (Version == 2)
-			{
-				// Skip over file data, if any
-				input.Position += FileDataSectionSize;
+			// Skip over file data, if any
+			Reader.BaseStream.Position += FileDataSectionSize;
 
-				ReadArchiveMD5Section();
-				ReadOtherMD5Section();
-				ReadSignatureSection();
-			}
+			ReadArchiveMD5Section();
+			ReadOtherMD5Section();
+			ReadSignatureSection();
 		}
 
 		/// <summary>
@@ -384,6 +430,9 @@ namespace ValvePak
 
 			if (OtherMD5SectionSize < 48)
 			{
+				TreeChecksum = null;
+				ArchiveMD5EntriesChecksum = null;
+				WholeFileChecksum = null;
 				Reader.BaseStream.Position += OtherMD5SectionSize;
 				return;
 			}
@@ -400,6 +449,9 @@ namespace ValvePak
 			Debug.Assert(Reader != null);
 
 			FileSizeBeforeSignature = (uint)(Reader.BaseStream.Position - StreamOffset);
+			SignatureType = ESignatureType.Unknown;
+			PublicKey = null;
+			Signature = null;
 
 			if (SignatureSectionSize == 0)
 			{
@@ -451,7 +503,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Returns the archive for the given index, opening its chunk file on first use.
-		/// The embedded archive (0x7FFF) is added by <see cref="Read(Stream)"/>.
+		/// The embedded archive (0x7FFF) is added when the directory file is read.
 		/// </summary>
 		private Archive GetArchive(ushort archiveIndex)
 		{
@@ -471,10 +523,10 @@ namespace ValvePak
 
 				if (archiveIndex == 0x7FFF)
 				{
-					throw new InvalidOperationException("The package has not been read.");
+					ThrowIfDirectoryFileClosed();
 				}
 
-				var fileName = GetArchiveIndexFullFilePath(FileName, archiveIndex);
+				var fileName = GetArchiveIndexFullFilePath(GetChunkBaseName(), archiveIndex);
 				var handle = File.OpenHandle(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
 				archive = new FileArchive(handle, ownsHandle: true, origin: 0, dataOffset: 0);
@@ -496,6 +548,34 @@ namespace ValvePak
 			return archive.Read(archive.DataOffset + offset, output);
 		}
 
+		private void ReadArchiveDataExactly(ushort archiveIndex, long offset, Span<byte> output)
+		{
+			var bytesRead = ReadArchiveData(archiveIndex, offset, output);
+
+			if (bytesRead != output.Length)
+			{
+				throw new EndOfStreamException($"Reached the end of archive {archiveIndex} after reading {bytesRead} of {output.Length} bytes at offset {offset}.");
+			}
+		}
+
+		private void CloseArchive(ushort archiveIndex)
+		{
+			lock (ArchivesLock)
+			{
+				if (Archives.TryRemove(archiveIndex, out var archive))
+				{
+					archive.Dispose();
+				}
+			}
+		}
+
+		private void CloseDirectoryFile()
+		{
+			CloseArchive(0x7FFF);
+			Reader?.Dispose();
+			Reader = null;
+		}
+
 		/// <summary>
 		/// Returns a stream that reads the entry directly from a memory mapping of its archive when possible,
 		/// otherwise reads entry into a byte array and returns <see cref="MemoryStream"/>.
@@ -505,9 +585,9 @@ namespace ValvePak
 		/// When trying to map a file in a non-split packages (<see cref="IsDirVPK"/>),
 		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
 		///
-		/// Each archive is mapped once and stays mapped until the package is disposed.
+		/// Each archive is mapped once.
 		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>
-		/// once the package is disposed.
+		/// once the package is disposed, or once <see cref="Write(string)"/> replaces the file they read from.
 		/// This method is safe to call from multiple threads.
 		/// </summary>
 		/// <param name="entry">Package entry.</param>
