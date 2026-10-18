@@ -34,13 +34,13 @@ namespace ValvePak.Test
 			using (var package = new Package())
 			{
 				package.SetFileName(dirPath);
-				package.WriteChunkSize = 1024;
+				package.WriteChunkSize = 800;
 
 				for (var i = 0; i < 10; i++)
 				{
 					var entry = package.AddFile($"files/chunked_{i}.bin", CreateTestData(400, (byte)i), multiChunk: true);
 
-					// 400 byte files with a 1024 chunk size, so three files per chunk
+					// 400 byte files with an 800 byte chunk size: a chunk file at exactly 800 bytes is not full yet, so each one holds three files
 					await Assert.That(entry.ArchiveIndex).IsEqualTo((ushort)(i / 3));
 				}
 
@@ -274,17 +274,17 @@ namespace ValvePak.Test
 			package.SetFileName(TempPath("limit_dir.vpk"));
 			package.WriteChunkSize = 1;
 
-			// With a chunk size of 1 every file starts a new chunk
+			// With a chunk size of 1 every file of 2 bytes starts a new chunk
 			PackageEntry? entry = null;
 
 			for (var i = 0; i < 0x7FFF; i++)
 			{
-				entry = package.AddFile($"{i}.bin", [1], multiChunk: true);
+				entry = package.AddFile($"{i}.bin", [1, 2], multiChunk: true);
 			}
 
 			await Assert.That(entry!.ArchiveIndex).IsEqualTo((ushort)0x7FFE);
 
-			await Assert.That(() => package.AddFile("one too many.bin", [1], multiChunk: true)).ThrowsExactly<InvalidOperationException>()
+			await Assert.That(() => package.AddFile("one too many.bin", [1, 2], multiChunk: true)).ThrowsExactly<InvalidOperationException>()
 				.WithMessageContaining("maximum amount of chunk files", StringComparison.Ordinal);
 		}
 
@@ -492,9 +492,39 @@ namespace ValvePak.Test
 		public async Task WriteChunkSizeValidation()
 		{
 			using var package = new Package();
-			await Assert.That(package.WriteChunkSize).IsEqualTo(200 * 1024 * 1024);
+			await Assert.That(package.WriteChunkSize).IsEqualTo(100 * 1024 * 1024);
 			await Assert.That(() => package.WriteChunkSize = 0).ThrowsExactly<ArgumentOutOfRangeException>();
 			await Assert.That(() => package.WriteChunkSize = -1).ThrowsExactly<ArgumentOutOfRangeException>();
+		}
+
+		[Test]
+		public async Task StartsNewChunkFileForStreamThatDoesNotFitTheCurrentOne()
+		{
+			using var package = new Package();
+			package.SetFileName(TempPath("big_dir.vpk"));
+
+			var first = package.AddFile("first.bin", CreateTestData(100, 1), multiChunk: true);
+
+			// Streams report lengths that would take a chunk file past 4 GiB
+			using var fitsCurrent = new ReportedLengthStream(CreateTestData(200, 2), uint.MaxValue - 100L);
+			var second = package.AddFile("second.bin", fitsCurrent, multiChunk: true);
+
+			using var fitsNew = new ReportedLengthStream(CreateTestData(300, 3), uint.MaxValue - 299L);
+			var third = package.AddFile("third.bin", fitsNew, multiChunk: true);
+
+			using var fitsNone = new ReportedLengthStream(CreateTestData(10, 4), uint.MaxValue + 1L);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(first.ArchiveIndex).IsEqualTo((ushort)0);
+				await Assert.That(second.ArchiveIndex).IsEqualTo((ushort)0);
+				await Assert.That(third.ArchiveIndex).IsEqualTo((ushort)1);
+				await Assert.That(() => package.AddFile("none.bin", fitsNone, multiChunk: true)).ThrowsExactly<ArgumentException>();
+				await Assert.That(File.Exists(TempPath("big_002.vpk"))).IsFalse();
+			}
+
+			await AssertEntryData(package, "second.bin", 200, 2);
+			await AssertEntryData(package, "third.bin", 300, 3);
 		}
 
 		private string TempPath(string fileName)
@@ -567,6 +597,22 @@ namespace ValvePak.Test
 
 				base.Dispose(disposing);
 			}
+		}
+
+		/// <summary>
+		/// Memory stream that reports a different length than the data it holds.
+		/// </summary>
+		private sealed class ReportedLengthStream : MemoryStream
+		{
+			private readonly long ReportedLength;
+
+			public ReportedLengthStream(byte[] data, long reportedLength)
+				: base(data, writable: false)
+			{
+				ReportedLength = reportedLength;
+			}
+
+			public override long Length => ReportedLength;
 		}
 	}
 }

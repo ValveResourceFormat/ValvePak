@@ -12,9 +12,10 @@ namespace ValvePak
 	public partial class Package
 	{
 		/// <summary>
-		/// Gets or sets the maximum size in bytes of chunk files created when adding files with multi chunk enabled,
-		/// see <see cref="AddFile(string, byte[], bool)"/>. A new chunk file is started once the current one reaches this size.
-		/// Defaults to 200 MiB.
+		/// Gets or sets the size in bytes of chunk files created when adding files with multi chunk enabled,
+		/// see <see cref="AddFile(string, byte[], bool)"/>. A new chunk file is started once the current one is larger than this size,
+		/// so a chunk file can end past it by up to the size of its last file.
+		/// Defaults to 100 MiB.
 		/// </summary>
 		public int WriteChunkSize
 		{
@@ -25,7 +26,7 @@ namespace ValvePak
 
 				field = value;
 			}
-		} = 200 * 1024 * 1024;
+		} = 100 * 1024 * 1024;
 
 		/// <summary>
 		/// Size in bytes of the buffer that file data is copied through when it is added to a chunk file.
@@ -106,7 +107,7 @@ namespace ValvePak
 		/// <param name="fileData">File data for this entry.</param>
 		/// <param name="multiChunk">If true, the data is written right away into a numbered chunk file (such as "example_001.vpk") instead of being kept in memory for the directory file.
 		/// <see cref="SetFileName(string)"/> must be called first with the path of the directory file, the chunk files are created next to it.
-		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
+		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
 		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
@@ -124,7 +125,7 @@ namespace ValvePak
 				return AddFileToDirectoryFile(entry, fileData);
 			}
 
-			var chunkFile = GetChunkFileForNextFile();
+			var chunkFile = GetChunkFileForNextFile(fileData.Length);
 			var offset = chunkFile.Length;
 			chunkFile.Write(fileData);
 
@@ -140,7 +141,7 @@ namespace ValvePak
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
 		/// <param name="multiChunk">If true, the data is copied right away into a numbered chunk file (such as "example_001.vpk") instead of being kept in memory for the directory file.
 		/// <see cref="SetFileName(string)"/> must be called first with the path of the directory file, the chunk files are created next to it.
-		/// A new chunk file is started whenever the current one reaches <see cref="WriteChunkSize"/>.
+		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
 		/// <exception cref="ArgumentException">The path has an empty file name or extension, or contains a null character.</exception>
@@ -157,6 +158,13 @@ namespace ValvePak
 				return AddFileToDirectoryFile(entry, ReadToEnd(fileData));
 			}
 
+			var knownLength = fileData.CanSeek ? fileData.Length - fileData.Position : 0;
+
+			if (knownLength > uint.MaxValue)
+			{
+				throw new ArgumentException($"The stream has {knownLength} bytes left, a chunk file can hold at most {uint.MaxValue}.", nameof(fileData));
+			}
+
 			var buffer = ArrayPool<byte>.Shared.Rent(AddFileBufferSize);
 
 			try
@@ -169,7 +177,7 @@ namespace ValvePak
 					return AddFileToDirectoryFile(entry, []);
 				}
 
-				var chunkFile = GetChunkFileForNextFile();
+				var chunkFile = GetChunkFileForNextFile(knownLength);
 				var offset = chunkFile.Length;
 				var crc = new Crc32();
 
@@ -245,7 +253,8 @@ namespace ValvePak
 		/// <summary>
 		/// Returns the chunk file that the next file should be written to, starting a new one if the current one is full.
 		/// </summary>
-		private ChunkFileWriter GetChunkFileForNextFile()
+		/// <param name="length">Size in bytes of the next file, or 0 if it is not known.</param>
+		private ChunkFileWriter GetChunkFileForNextFile(long length)
 		{
 			if (FileName == null)
 			{
@@ -256,7 +265,8 @@ namespace ValvePak
 
 			if (CurrentChunkFile != null)
 			{
-				if (CurrentChunkFile.Length < (uint)WriteChunkSize)
+				// The next file must also fit within the 4 GiB that offsets can address
+				if (CurrentChunkFile.Length <= (uint)WriteChunkSize && CurrentChunkFile.Length + length <= uint.MaxValue)
 				{
 					return CurrentChunkFile;
 				}
