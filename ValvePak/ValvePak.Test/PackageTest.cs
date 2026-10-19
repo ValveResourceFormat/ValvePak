@@ -213,12 +213,20 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.CRC32).IsEqualTo(0x09321FC0u);
 				await Assert.That(package.FindEntry("folder with space/file name with space.txt")?.CRC32).IsEqualTo(0x76D91432u);
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.CRC32).IsEqualTo(0x15C1490Fu);
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.CRC32).IsEqualTo(0x32CFF012u);
-				await Assert.That(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt")).IsNull();
+				await Assert.That(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt")?.CRC32).IsEqualTo(0x15C1490Fu);
+				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT")?.CRC32).IsEqualTo(0x15C1490Fu);
+				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")).IsNull();
 				await Assert.That(package.FindEntry("uppercasefolder/UpperCaseFile.txt")).IsNull();
-				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT")).IsNull();
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt2")).IsNull();
 			}
+		}
+
+		/// <summary>
+		/// Returns the entry of broken_dir.vpk whose stored names have upper case letters, which <see cref="Package.FindEntry(string)"/> does not find.
+		/// </summary>
+		private static PackageEntry? GetUpperCaseEntry(Package package)
+		{
+			return package.Entries!["txt"].Find(static entry => entry.FileName == "UpperCaseFile");
 		}
 
 		[Test]
@@ -229,7 +237,7 @@ namespace ValvePak.Test
 			using var package = new Package();
 			package.Read(path);
 
-			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			var file = GetUpperCaseEntry(package);
 			await Assert.That(file).IsNotNull();
 			await Assert.That(file.CRC32).IsEqualTo(0x32CFF012u);
 
@@ -264,7 +272,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space/test")?.GetFullPath()).IsEqualTo("folder with space/test");
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.GetFullPath()).IsEqualTo("folder with space/space_extension. txt");
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.GetFullPath()).IsEqualTo("uppercasefolder/bad_file_forfun.txt");
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.GetFullPath()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt");
+				await Assert.That(GetUpperCaseEntry(package)?.GetFullPath()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt");
 
 				await Assert.That(package.FindEntry("test")?.GetFileName()).IsEqualTo("test");
 				await Assert.That(package.FindEntry("folder with space/test")?.GetFileName()).IsEqualTo("test");
@@ -287,7 +295,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space/test")?.ToString()).IsEqualTo("folder with space/test crc=0xbf108706 metadatasz=0 fnumber=0 ofs=0x52 sz=41");
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.ToString()).IsEqualTo("folder with space/space_extension. txt crc=0x9321fc0 metadatasz=0 fnumber=0 ofs=0x7b sz=30");
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.ToString()).IsEqualTo("uppercasefolder/bad_file_forfun.txt crc=0x15c1490f metadatasz=0 fnumber=0 ofs=0xa2 sz=2");
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.ToString()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43");
+				await Assert.That(GetUpperCaseEntry(package)?.ToString()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43");
 			}
 		}
 
@@ -442,7 +450,7 @@ namespace ValvePak.Test
 			package.Read(path);
 			await Assert.That(() => package.VerifyFileChecksums()).ThrowsNothing();
 
-			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			var file = GetUpperCaseEntry(package);
 			await Assert.That(file).IsNotNull();
 			await Assert.That(file.CRC32).IsEqualTo(0x32CFF012u);
 

@@ -90,11 +90,11 @@ namespace ValvePak
 		/// <summary>
 		/// Moves an entry in current package to a new path. Only the directory tree changes, the file data is not touched.
 		/// Be careful to not move it onto the path of another entry, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
 		/// </summary>
 		/// <param name="entry">The package entry to rename.</param>
 		/// <param name="newFilePath">Full new file path for this entry.</param>
-		/// <exception cref="ArgumentException">The entry is not in this package, or the new path has an empty file name or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The entry is not in this package, or the new path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
 		public void RenameFile(PackageEntry entry, string newFilePath)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -115,7 +115,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
@@ -125,7 +125,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -150,7 +150,7 @@ namespace ValvePak
 		/// <summary>
 		/// Add file to current package, reading its data from the current position of the stream to its end.
 		/// Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
@@ -160,7 +160,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
 		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -355,39 +355,26 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Splits the given path into lowercased directory, file and type names.
+		/// Splits a file path into the directory, file and type names that <see cref="AddFile(string, byte[], bool)"/> stores it with, normalized like <see cref="NormalizeEntryPath(string)"/> does.
 		/// </summary>
-		private static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath, string paramName)
+		/// <param name="filePath">Full file path.</param>
+		/// <returns>The names, with a space for a missing directory or type name.</returns>
+		/// <exception cref="ArgumentException">The path is rejected.</exception>
+		public static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath)
 		{
-			if (filePath.Contains('\0', StringComparison.Ordinal))
-			{
-				throw new ArgumentException($"'{filePath}' contains a null character.", paramName);
-			}
+			ArgumentNullException.ThrowIfNull(filePath);
 
-			SplitPath(NormalizePath(filePath, out _), out var directory, out var fileName, out var extension);
-
-			if (fileName.IsEmpty)
-			{
-				throw new ArgumentException($"'{filePath}' has an empty file name.", paramName);
-			}
-
-			return (ToLowerAscii(directory), ToLowerAscii(fileName), ToLowerAscii(extension));
+			return ParseEntryPath(filePath, nameof(filePath));
 		}
 
-		private static string ToLowerAscii(ReadOnlySpan<char> value)
+		private static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath, string paramName)
 		{
-			if (!value.ContainsAnyInRange('A', 'Z'))
+			if (GetEntryPathError(filePath, out var directory, out var fileName, out var typeName) is { } error)
 			{
-				return value.ToString();
+				throw new ArgumentException($"'{filePath}' {error}.", paramName);
 			}
 
-			return string.Create(value.Length, value, static (span, source) =>
-			{
-				for (var i = 0; i < source.Length; i++)
-				{
-					span[i] = ToLowerAscii(source[i]);
-				}
-			});
+			return (directory.ToString(), fileName.ToString(), typeName.ToString());
 		}
 
 		private static char ToLowerAscii(char c)
@@ -895,21 +882,9 @@ namespace ValvePak
 		/// </summary>
 		private static int CompareNames(string x, string y)
 		{
-			var length = Math.Min(x.Length, y.Length);
+			var comparison = AsciiComparer.Compare(x, y);
 
-			for (var i = 0; i < length; i++)
-			{
-				var comparison = ToLowerAscii(x[i]).CompareTo(ToLowerAscii(y[i]));
-
-				if (comparison != 0)
-				{
-					return comparison;
-				}
-			}
-
-			var lengthComparison = x.Length.CompareTo(y.Length);
-
-			return lengthComparison != 0 ? lengthComparison : string.CompareOrdinal(x, y);
+			return comparison != 0 ? comparison : string.CompareOrdinal(x, y);
 		}
 
 		private static string GetTreeDirectoryName(PackageEntry entry)

@@ -91,17 +91,29 @@ namespace ValvePak
 		}
 
 		/// <summary>
+		/// Returns <see cref="DirectoryName"/>, or an empty string for the root directory, which is stored as a single space or an empty string.
+		/// </summary>
+#pragma warning disable CA1024 // Use properties where appropriate
+		public string GetDirectoryPath()
+#pragma warning restore CA1024
+		{
+			return DirectoryName is Package.Space or "" ? string.Empty : DirectoryName;
+		}
+
+		/// <summary>
 		/// Returns the absolute path of the file in the package.
 		/// </summary>
 		/// <returns>Absolute path.</returns>
 		public string GetFullPath()
 		{
-			if (DirectoryName == Package.Space)
+			var directory = GetDirectoryPath();
+
+			if (directory.Length == 0)
 			{
 				return GetFileName();
 			}
 
-			return string.Concat(DirectoryName, Package.DirectorySeparator, GetFileName());
+			return string.Concat(directory, Package.DirectorySeparator, GetFileName());
 		}
 
 		/// <summary>

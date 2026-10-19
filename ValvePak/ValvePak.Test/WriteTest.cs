@@ -168,51 +168,36 @@ namespace ValvePak.Test
 			using var package = new Package();
 			package.OptimizeEntriesForBinarySearch(comparison);
 
-			var entry = package.AddFile("\\Materials//./Models/./Crate.VMAT_C/", Encoding.UTF8.GetBytes("crate"));
-			var noExtension = package.AddFile("./readme.", []);
-			var trailingDots = package.AddFile("notes..", [1]);
-			var trailingDotAfterExtension = package.AddFile("archive.tar.", [2]);
+			var entry = package.AddFile("\\Materials//./Models/../Models/Crate.VMAT_C", Encoding.UTF8.GetBytes("crate"));
+			var noExtension = package.AddFile("./Docs/ReadMe", []);
 
 			using (Assert.Multiple())
 			{
 				await Assert.That(entry.DirectoryName).IsEqualTo("materials/models");
 				await Assert.That(entry.FileName).IsEqualTo("crate");
 				await Assert.That(entry.TypeName).IsEqualTo("vmat_c");
-				await Assert.That(noExtension.DirectoryName).IsEqualTo(" ");
 				await Assert.That(noExtension.TypeName).IsEqualTo(" ");
-				await Assert.That(package.FindEntry("materials/models/crate.vmat_c")).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("/materials\\models//crate.vmat_c")).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("./materials/./models/crate.vmat_c/".AsSpan())).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("readme")).IsEqualTo(noExtension);
-				await Assert.That(package.FindEntry("/readme.")).IsEqualTo(noExtension);
-				await Assert.That(trailingDots.FileName).IsEqualTo("notes");
-				await Assert.That(trailingDots.TypeName).IsEqualTo(" ");
-				await Assert.That(trailingDotAfterExtension.FileName).IsEqualTo("archive");
-				await Assert.That(trailingDotAfterExtension.TypeName).IsEqualTo("tar");
-
-				foreach (var added in new[] { entry, noExtension, trailingDots, trailingDotAfterExtension })
-				{
-					await Assert.That(package.FindEntry(added.GetFullPath())).IsEqualTo(added);
-				}
+				await Assert.That(package.FindEntry("/MATERIALS\\models//crate.vmat_c")).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("./materials/./textures/../models/crate.vmat_c".AsSpan())).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("DOCS/README")).IsEqualTo(noExtension);
+				await Assert.That(package.FindEntry("materials/models/crate.vmat_c/")).IsNull();
+				await Assert.That(package.FindEntry("../materials/models/crate.vmat_c")).IsNull();
 			}
 		}
 
 		[Test]
 		[Arguments(false)]
 		[Arguments(true)]
-		public async Task FindsReadEntriesWhoseNamesAreNotNormalized(bool optimize)
+		public async Task DoesNotFindReadEntriesWhoseNamesAreNotNormalized(bool optimize)
 		{
 			(string Directory, string File, string Type)[] names =
 			[
 				("a//b", "file", "txt"),
-				("a/./b", "file", "txt"),
-				("./rel", "file", "txt"),
-				("/leading", "file", "txt"),
-				("trailing/", "file", "txt"),
+				("a/../b", "file", "txt"),
 				("back\\slash", "file", "txt"),
 				(" ", "has.dot", " "),
-				("dir", "noext.", " "),
 				(" ", "archive", "tar.gz"),
+				("Upper", "File", "TXT"),
 				("dir", "archive.tar", "gz"),
 			];
 
@@ -241,18 +226,22 @@ namespace ValvePak.Test
 			readBack.SetFileName("test.vpk");
 			readBack.Read(output);
 
-			var entries = readBack.Entries!.Values.SelectMany(static entries => entries).ToList();
+			var entries = readBack.Entries!.Values.SelectMany(static entries => entries).ToDictionary(static entry => entry.GetFullPath());
 			await Assert.That(entries).Count().IsEqualTo(names.Length);
-
-			foreach (var entry in entries)
-			{
-				await Assert.That(readBack.FindEntry(entry.GetFullPath())).IsSameReferenceAs(entry);
-			}
 
 			using (Assert.Multiple())
 			{
-				await Assert.That(readBack.FindEntry("dir/noext")).IsNull();
-				await Assert.That(readBack.FindEntry("has")).IsNull();
+				foreach (var (path, entry) in entries)
+				{
+					var expected = path switch
+					{
+						"dir/archive.tar.gz" => entry,
+						"Upper/File.TXT" when optimize => entry,
+						_ => null,
+					};
+
+					await Assert.That(readBack.FindEntry(path)).IsSameReferenceAs(expected);
+				}
 			}
 		}
 
@@ -667,17 +656,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry(entry.GetFullPath())).IsEqualTo(entry);
 			}
 
-			var upperCaseEntry = package.FindEntry("ADDONS/CHESS/ZZZ.VDF");
-
-			if (comparison == StringComparison.OrdinalIgnoreCase)
-			{
-				await Assert.That(upperCaseEntry).IsEqualTo(addedEntries[0]);
-			}
-			else
-			{
-				await Assert.That(upperCaseEntry).IsNull();
-			}
-
+			await Assert.That(package.FindEntry("ADDONS/CHESS/ZZZ.VDF")).IsEqualTo(addedEntries[0]);
 			await Assert.That(package.FindEntry("addons/chess/missing.vdf")).IsNull();
 		}
 
