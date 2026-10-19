@@ -89,6 +89,22 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		public async Task WriteDeletesStaleChunkFilesOfNewPackage()
+		{
+			var dirPath = TempPath("stale_dir.vpk");
+			await File.WriteAllBytesAsync(TempPath("stale_001.vpk"), [1]);
+
+			using (var package = new Package())
+			{
+				package.SetFileName(dirPath);
+				package.AddFile("a.bin", CreateTestData(200, 1), multiChunk: true);
+				package.Write(dirPath);
+			}
+
+			await Assert.That(File.Exists(TempPath("stale_001.vpk"))).IsFalse();
+		}
+
+		[Test]
 		public async Task WritesChunkHashFractions()
 		{
 			var dirPath = TempPath("fractions_dir.vpk");
@@ -845,6 +861,55 @@ namespace ValvePak.Test
 
 			await AssertFilesUnchanged(originalFiles);
 			await AssertPackageVerifies(package);
+		}
+
+		[Test]
+		public async Task RequiresRepackForPathsTheChunkFilesAreNotNamedAfter()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var otherChunkNames = TempPath("copy_dir.vpk");
+
+			using var package = new Package();
+			package.Read(dirPath);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.RequiresRepack(dirPath)).IsFalse();
+				await Assert.That(package.RequiresRepack(TempPath("test.vpk"))).IsFalse();
+				await Assert.That(package.RequiresRepack(otherChunkNames)).IsTrue();
+				await Assert.That(() => package.Write(otherChunkNames)).ThrowsExactly<InvalidOperationException>();
+			}
+
+			package.Write(otherChunkNames, package.RequiresRepack(otherChunkNames));
+			await AssertPackageVerifies(package);
+		}
+
+		[Test]
+		public async Task RepackIntoDirVpkMovesDirectoryFileData()
+		{
+			var path = TempPath("single.vpk");
+			var dirPath = TempPath("single_dir.vpk");
+
+			using (var package = new Package())
+			{
+				package.AddFile("a.bin", CreateTestData(400, 1));
+				package.Write(path);
+			}
+
+			using (var package = new Package())
+			{
+				package.Read(path);
+				package.AddFile("b.bin", CreateTestData(300, 2));
+				package.Write(dirPath, repack: true);
+			}
+
+			using var readBack = new Package();
+			readBack.Read(dirPath);
+
+			await Assert.That(readBack.EnumerateEntries().All(static entry => entry.ArchiveIndex == 0)).IsTrue();
+			await AssertEntryData(readBack, "a.bin", 400, 1);
+			await AssertEntryData(readBack, "b.bin", 300, 2);
+			await AssertPackageVerifies(readBack);
 		}
 
 		private string TempPath(string fileName)

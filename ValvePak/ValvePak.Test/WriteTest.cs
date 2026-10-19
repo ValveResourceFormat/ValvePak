@@ -329,7 +329,7 @@ namespace ValvePak.Test
 			using (Assert.Multiple())
 			{
 				await Assert.That(emptyEntry.ArchiveIndex).IsEqualTo((ushort)0x7FFF);
-				await Assert.That(emptyEntry.Offset).IsEqualTo(uint.MaxValue);
+				await Assert.That(emptyEntry.Offset).IsEqualTo((uint)dataLength);
 				await Assert.That(emptyEntry.Length).IsZero();
 				await Assert.That(readBack.ArchiveMD5SectionSize).IsEqualTo((uint)(fractionCount * ChunkHashFraction.SectionEntrySize));
 				await Assert.That(signatureSection.Length).IsEqualTo(20);
@@ -679,6 +679,24 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("path/to/cat.png")).IsEqualTo(entry);
 				await Assert.That(package.Entries!.ContainsKey("jpg")).IsFalse();
 				await Assert.That(() => package.RenameFile(otherEntry, "other.txt")).ThrowsExactly<ArgumentException>();
+			}
+		}
+
+		[Test]
+		public async Task RenamesAndRemovesDirectories()
+		{
+			using var package = new Package();
+			var file = package.AddFile("materials/a.txt", [1]);
+			var nested = package.AddFile("materials/sub/b.txt", [2]);
+			var sibling = package.AddFile("materialsx/c.txt", [3]);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.RenameDirectory("materials/", "Renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
+				await Assert.That(nested.GetFullPath()).IsEqualTo("renamed/sub/b.txt");
+				await Assert.That(sibling.GetFullPath()).IsEqualTo("materialsx/c.txt");
+				await Assert.That(package.RemoveDirectory("renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
+				await Assert.That(package.Entries!["txt"]).IsEquivalentTo([sibling], CollectionOrdering.Matching);
 			}
 		}
 
