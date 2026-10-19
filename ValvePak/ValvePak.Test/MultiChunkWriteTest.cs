@@ -912,6 +912,86 @@ namespace ValvePak.Test
 			await AssertPackageVerifies(readBack);
 		}
 
+		[Test]
+		public async Task OpensNestedPackagesInPlace()
+		{
+			var leafData = CreateTestData(10000, 1);
+			var level2 = CreatePackageBytes(package => package.AddFile("data/leaf.bin", leafData));
+			var level1 = CreatePackageBytes(package =>
+			{
+				var entry = package.AddFile("maps/level2.vpk", level2[20..]);
+				entry.SmallData = level2[..20];
+				entry.CRC32 = Crc32.HashToUInt32(level2);
+			});
+
+			var path = TempPath("level0_dir.vpk");
+
+			using (var created = new Package())
+			{
+				created.SetFileName(path);
+				created.AddFile("maps/level1.vpk", level1, multiChunk: true);
+				created.Write(path);
+			}
+
+			using var level0Package = Package.Open(path);
+			using var level1Package = level0Package.OpenPackage(level0Package.FindEntry("maps/level1.vpk")!);
+			var level2Entry = level1Package.FindEntry("maps/level2.vpk")!;
+			using var level2Package = level1Package.OpenPackage(level2Entry);
+
+			var leafEntry = level2Package.FindEntry("data/leaf.bin")!;
+			level2Package.ReadEntry(leafEntry, out var leafRead);
+
+			using var mapped = level2Package.GetMemoryMappedStreamIfPossible(leafEntry);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(leafRead).IsEquivalentTo(leafData, CollectionOrdering.Matching);
+				await Assert.That(mapped is UnmanagedMemoryStream).IsTrue();
+				await Assert.That(level2Package.Parent).IsSameReferenceAs(level1Package);
+				await Assert.That(level2Package.ParentEntry).IsSameReferenceAs(level2Entry);
+			}
+
+			level1Package.Dispose();
+
+			await Assert.That(() => level2Package.ReadEntry(leafEntry, out _)).ThrowsExactly<ObjectDisposedException>();
+		}
+
+		[Test]
+		public async Task NestedPackagesDoNotUseChunkFiles()
+		{
+			using var innerDirectoryFile = new MemoryStream();
+
+			using (var inner = new Package())
+			{
+				inner.SetFileName(TempPath("inner_dir.vpk"));
+				inner.AddFile("chunked.bin", CreateTestData(100, 1), multiChunk: true);
+				inner.AddFile("embedded.bin", CreateTestData(100, 2));
+				inner.Write(innerDirectoryFile);
+			}
+
+			using var outer = new Package();
+			outer.AddFile("maps/inner_dir.vpk", innerDirectoryFile.ToArray());
+
+			using var nested = outer.OpenPackage(outer.FindEntry("maps/inner_dir.vpk")!);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(() => nested.ReadEntry(nested.FindEntry("embedded.bin")!, out _)).ThrowsNothing();
+				await Assert.That(() => nested.ReadEntry(nested.FindEntry("chunked.bin")!, out _)).ThrowsExactly<NotSupportedException>();
+			}
+		}
+
+		private static byte[] CreatePackageBytes(Action<Package> addFiles)
+		{
+			using var package = new Package();
+			addFiles(package);
+
+			using var output = new MemoryStream();
+			package.Write(output);
+
+			return output.ToArray();
+		}
+
 		private string TempPath(string fileName)
 		{
 			return Path.Combine(TempDirectory, fileName);

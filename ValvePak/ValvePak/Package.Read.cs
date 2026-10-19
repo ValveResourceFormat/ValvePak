@@ -68,10 +68,89 @@ namespace ValvePak
 				.Where(static archiveIndex => archiveIndex < DirectoryArchiveIndex)
 				.Max(static archiveIndex => (int?)archiveIndex) ?? -1;
 
-			if (HighestChunkIndex >= 0)
+			if (HighestChunkIndex >= 0 && Parent == null)
 			{
 				ChunkBaseName = Path.GetFullPath(FileName);
 			}
+		}
+
+		/// <summary>
+		/// Opens and reads the package at the given path, with its entries sorted for binary search, see <see cref="OptimizeEntriesForBinarySearch"/>.
+		/// </summary>
+		/// <param name="path">Path of the directory file.</param>
+		/// <param name="comparison">Comparison that <see cref="FindEntry(string)"/> compares names with.</param>
+		/// <returns>The read package, which holds the file open until it is disposed.</returns>
+		public static Package Open(string path, StringComparison comparison = StringComparison.Ordinal)
+		{
+			ArgumentNullException.ThrowIfNull(path);
+
+			var package = new Package();
+
+			try
+			{
+				package.OptimizeEntriesForBinarySearch(comparison);
+				package.Read(path);
+			}
+			catch
+			{
+				package.Dispose();
+				throw;
+			}
+
+			return package;
+		}
+
+		/// <summary>
+		/// Opens the package stored in an entry of this package like <see cref="Open"/> does, reading it in place from the archive the entry is in.
+		/// This package must stay open and must not replace the file the entry is in while the inner package is used,
+		/// and reading entries of the inner package that are in chunk files throws <see cref="NotSupportedException"/>.
+		/// </summary>
+		/// <param name="entry">The entry of this package that holds the inner package.</param>
+		/// <param name="comparison">Comparison that <see cref="FindEntry(string)"/> of the inner package compares names with.</param>
+		/// <returns>The inner package, which is disposed separately.</returns>
+		public Package OpenPackage(PackageEntry entry, StringComparison comparison = StringComparison.Ordinal)
+		{
+			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var stream = OpenEntryStream(entry);
+			var package = new Package
+			{
+				Parent = this,
+				ParentEntry = entry,
+			};
+
+			try
+			{
+				package.OptimizeEntriesForBinarySearch(comparison);
+				package.SetFileName(entry.GetFullPath());
+				package.Read(stream);
+			}
+			catch
+			{
+				package.Dispose();
+				stream.Dispose();
+				throw;
+			}
+
+			return package;
+		}
+
+		/// <summary>
+		/// Returns a stream over the data of the entry including its preload bytes, reading from the archive the entry is in unless its data is held in memory.
+		/// </summary>
+		private Stream OpenEntryStream(PackageEntry entry)
+		{
+			if (entry.PendingData != null || entry.Length == 0)
+			{
+				ReadEntry(entry, out var data, validateCrc: false);
+
+				return new MemoryStream(data, writable: false);
+			}
+
+			var archive = GetArchive(entry.ArchiveIndex);
+
+			return new ArchiveRangeStream(archive, archive.DataOffset + entry.Offset, entry.Length, entry.SmallData);
 		}
 
 		/// <summary>
@@ -81,6 +160,8 @@ namespace ValvePak
 		{
 			CloseDirectoryFile();
 			ReadFilePath = path;
+			Parent = null;
+			ParentEntry = null;
 
 			var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -141,14 +222,12 @@ namespace ValvePak
 			var embeddedDataOffset = (long)HeaderSize + TreeSize;
 
 			// Taking the handle flushes the stream's buffer, so it is done here before any other thread can read from the stream
-			if (input is FileStream fileStream)
+			Archives[DirectoryArchiveIndex] = input switch
 			{
-				Archives[DirectoryArchiveIndex] = new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset);
-			}
-			else
-			{
-				Archives[DirectoryArchiveIndex] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
-			}
+				FileStream fileStream => new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset),
+				ArchiveRangeStream rangeStream => new RangeStreamArchive(rangeStream, StreamOffset, embeddedDataOffset),
+				_ => new StreamArchive(input, StreamOffset, embeddedDataOffset),
+			};
 		}
 
 		private void ReadSections()
@@ -575,7 +654,8 @@ namespace ValvePak
 		/// Files smaller or equal to 4096 bytes will be read into memory.
 		///
 		/// When trying to map a file in a non-split packages (<see cref="IsDirVPK"/>),
-		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
+		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>,
+		/// or was opened with <see cref="OpenPackage"/> from such a package.
 		///
 		/// Each archive is mapped once.
 		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>

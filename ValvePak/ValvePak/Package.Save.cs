@@ -426,6 +426,11 @@ namespace ValvePak
 
 		private string GetChunkBaseName()
 		{
+			if (Parent != null)
+			{
+				throw new NotSupportedException("Chunk files of a package opened from an entry of another package are not supported.");
+			}
+
 			if (FileName == null)
 			{
 				throw new InvalidOperationException("Call SetFileName() with the path of the directory file before adding files with multi chunk enabled, chunk files are created next to it.");

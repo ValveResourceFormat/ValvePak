@@ -87,6 +87,16 @@ namespace ValvePak
 		public string? FilePath => StreamOffset == 0 ? ReadFilePath : null;
 
 		/// <summary>
+		/// Gets the package that this package was opened from with <see cref="OpenPackage"/>, which must stay open while this package is used.
+		/// </summary>
+		public Package? Parent { get; private set; }
+
+		/// <summary>
+		/// Gets the entry of <see cref="Parent"/> that this package was opened from.
+		/// </summary>
+		public PackageEntry? ParentEntry { get; private set; }
+
+		/// <summary>
 		/// Gets whether this package had "_dir" in the name, indicating it has multiple chunk files.
 		/// </summary>
 		public bool IsDirVPK { get; private set; }
