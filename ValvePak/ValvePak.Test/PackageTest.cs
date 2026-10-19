@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -534,11 +535,12 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		[Arguments(0, "File tree")]
-		[Arguments(16, "Archive MD5 entries")]
-		public async Task SectionChecksumMismatchIsReportedWhenWholeFileChecksumMatches(int checksumOffset, string sectionName)
+		[Arguments(0, "File tree", false)]
+		[Arguments(16, "Archive MD5 entries", false)]
+		[Arguments(0, "File tree", true)]
+		public async Task SectionChecksumMismatchIsReportedOnlyWithoutSignatureHeader(int checksumOffset, string sectionName, bool hasSignatureHeader)
 		{
-			var data = CreateSmallPackageBytes();
+			var data = hasSignatureHeader ? CreateSmallPackageBytes() : CreateSmallPackageBytesWithoutSignatureSection();
 			var otherMD5SectionOffset = GetOtherMD5SectionOffset(data);
 
 			data.AsSpan(otherMD5SectionOffset + checksumOffset, 16).Fill(0xAB);
@@ -549,6 +551,13 @@ namespace ValvePak.Test
 			package.Read(new MemoryStream(data));
 
 			var progress = new SynchronousProgress();
+
+			if (hasSignatureHeader)
+			{
+				await Assert.That(() => package.VerifyHashes(progress)).ThrowsExactly<InvalidDataException>()
+					.WithMessageContaining($"{sectionName} checksum mismatch (", StringComparison.Ordinal);
+				return;
+			}
 
 			await Assert.That(() => package.VerifyHashes(progress)).ThrowsNothing();
 			await Assert.That(progress.Reports).Count().IsEqualTo(1);
@@ -636,6 +645,40 @@ namespace ValvePak.Test
 
 			await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
 			await Assert.That(() => package.VerifyChunkHashes(null)).ThrowsNothing();
+		}
+
+		[Test]
+		[Arguments("cs2_new_signature_actually_signed.vpk", "Verified the package signature.", 0)]
+		[Arguments("test_single.vpk", "The package is not signed.", 0)]
+		[Arguments("test_dir.vpk", "The package is not signed.", 3)]
+		[Arguments("broken_dir.vpk", "The package is not signed.", 6)]
+		public async Task VerifyReportsCountFirstAndChecksCrcOfUnhashedEntries(string fileName, string signatureReport, int crcReports)
+		{
+			var path = Path.Combine(AppContext.BaseDirectory, "Files", fileName);
+
+			using var package = new Package();
+			package.Read(path);
+
+			var progress = new SynchronousProgress();
+			package.Verify(progress);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(int.Parse(progress.Reports[0], CultureInfo.InvariantCulture)).IsEqualTo(progress.Reports.Count - 1);
+				await Assert.That(progress.Reports[1]).IsEqualTo(signatureReport);
+				await Assert.That(progress.Reports.Count(report => report.StartsWith("Verifying CRC32", StringComparison.Ordinal))).IsEqualTo(crcReports);
+				await Assert.That(progress.Reports[^1]).IsEqualTo("Verified the package.");
+			}
+		}
+
+		[Test]
+		public async Task VerifyThrowsOnCrcMismatchOfUnhashedEntry()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"));
+			package.FindEntry("kitten.jpg")!.CRC32 = 0xDEADBEEF;
+
+			await Assert.That(() => package.Verify()).ThrowsExactly<InvalidDataException>();
 		}
 
 		[Test]
@@ -987,6 +1030,14 @@ namespace ValvePak.Test
 			package.Write(output);
 
 			return output.ToArray();
+		}
+
+		private static byte[] CreateSmallPackageBytesWithoutSignatureSection()
+		{
+			var package = CreateSmallPackageBytes()[..^UnsignedSignatureSectionSize];
+			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(SignatureSectionSizeOffset), 0);
+
+			return package;
 		}
 
 		private static int GetOtherMD5SectionOffset(byte[] package)
