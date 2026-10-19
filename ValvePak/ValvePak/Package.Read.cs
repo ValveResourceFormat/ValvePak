@@ -3,6 +3,8 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -602,6 +604,90 @@ namespace ValvePak
 			ReadEntry(entry, out var output, false);
 
 			return new MemoryStream(output);
+		}
+
+		/// <summary>
+		/// Returns a read-only stream over a whole chunk file, or for <see cref="DirectoryArchiveIndex"/> over the file data in the directory file, at <see cref="PackageEntry.Offset"/> positions.
+		/// Like streams from <see cref="GetMemoryMappedStreamIfPossible"/>, it can only be read while the package is open and has not replaced the file it reads from.
+		/// </summary>
+		/// <param name="archiveIndex">Index of the chunk file, or <see cref="DirectoryArchiveIndex"/>.</param>
+		/// <exception cref="FileNotFoundException">The chunk file does not exist.</exception>
+		public Stream OpenArchiveStream(ushort archiveIndex)
+		{
+			ArgumentOutOfRangeException.ThrowIfGreaterThan(archiveIndex, DirectoryArchiveIndex);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var archive = GetArchive(archiveIndex);
+			var length = Math.Max(0, archive.Length - archive.DataOffset);
+
+			if (archiveIndex == DirectoryArchiveIndex && Version != 1)
+			{
+				length = Math.Min(length, FileDataSectionSize);
+			}
+
+			return archive.OpenMappedStream(archive.DataOffset, length) ?? new ArchiveRangeStream(archive, archive.DataOffset, length);
+		}
+
+		/// <summary>
+		/// Returns the full path of a chunk file of this package, which does not have to exist, such as "pak01_003.vpk" for "pak01_dir.vpk".
+		/// </summary>
+		/// <param name="archiveIndex">Index of the chunk file, up to <see cref="MaxChunkIndex"/>.</param>
+		/// <exception cref="InvalidOperationException">The package has no file name.</exception>
+		public string GetChunkFilePath(ushort archiveIndex)
+		{
+			ArgumentOutOfRangeException.ThrowIfGreaterThan(archiveIndex, MaxChunkIndex);
+
+			return GetArchiveIndexFullFilePath(GetChunkBaseName(), archiveIndex);
+		}
+
+		/// <summary>
+		/// Parses a path in the form that <see cref="GetChunkFilePath(ushort)"/> returns: a base name, an underscore,
+		/// three digits or four to five digits without a leading zero, and ".vpk".
+		/// </summary>
+		/// <param name="path">The path to parse.</param>
+		/// <param name="baseName">The path without the underscore, the index and ".vpk".</param>
+		/// <param name="archiveIndex">The index of the chunk file.</param>
+		/// <returns>True if the path is in the form of a chunk file path.</returns>
+		public static bool TryParseChunkFilePath(string path, [NotNullWhen(true)] out string? baseName, out ushort archiveIndex)
+		{
+			ArgumentNullException.ThrowIfNull(path);
+
+			const string Extension = ".vpk";
+
+			baseName = null;
+			archiveIndex = 0;
+
+			if (!path.EndsWith(Extension, StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			var name = path.AsSpan(0, path.Length - Extension.Length);
+			var separator = name.LastIndexOf('_');
+
+			if (separator < 1)
+			{
+				return false;
+			}
+
+			var digits = name[(separator + 1)..];
+
+			if (digits.Length is < 3 or > 5 || digits.ContainsAnyExceptInRange('0', '9') || (digits.Length > 3 && digits[0] == '0'))
+			{
+				return false;
+			}
+
+			var index = int.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+
+			if (index > MaxChunkIndex)
+			{
+				return false;
+			}
+
+			baseName = path[..separator];
+			archiveIndex = (ushort)index;
+
+			return true;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

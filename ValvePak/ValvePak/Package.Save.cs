@@ -271,9 +271,9 @@ namespace ValvePak
 
 			var knownLength = fileData.CanSeek ? fileData.Length - fileData.Position : 0;
 
-			if (knownLength > uint.MaxValue)
+			if (knownLength > MaxChunkFileSize)
 			{
-				throw new ArgumentException($"The stream has {knownLength} bytes left, a chunk file can hold at most {uint.MaxValue}.", nameof(fileData));
+				throw new ArgumentException($"The stream has {knownLength} bytes left, a chunk file can hold at most {MaxChunkFileSize}.", nameof(fileData));
 			}
 
 			var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
@@ -401,12 +401,12 @@ namespace ValvePak
 		/// <param name="length">Size in bytes of the next file, or 0 if it is not known.</param>
 		private bool HasRoomForNextFile([NotNullWhen(true)] ChunkFileWriter? chunkFile, long length)
 		{
-			return chunkFile != null && chunkFile.Length <= (uint)WriteChunkSize && chunkFile.Length + length <= uint.MaxValue;
+			return chunkFile != null && chunkFile.Length <= (uint)WriteChunkSize && chunkFile.Length + length <= MaxChunkFileSize;
 		}
 
 		private static void ThrowIfChunkLimitReached(int archiveIndex)
 		{
-			if (archiveIndex >= DirectoryArchiveIndex)
+			if (archiveIndex > MaxChunkIndex)
 			{
 				throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
 			}
@@ -1071,7 +1071,7 @@ namespace ValvePak
 						}
 						else if (archiveIndex == DirectoryArchiveIndex)
 						{
-							if ((ulong)embeddedDataOffset + entry.Length > int.MaxValue)
+							if ((ulong)embeddedDataOffset + entry.Length > MaxDirectoryFileDataSize)
 							{
 								throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
 							}
@@ -1081,9 +1081,9 @@ namespace ValvePak
 							embeddedEntries.Add(entry);
 						}
 
-						if (entry.SmallData.Length > ushort.MaxValue)
+						if (entry.SmallData.Length > MaxPreloadSize)
 						{
-							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {entry.SmallData.Length} preload bytes, the directory tree can store at most {ushort.MaxValue}.");
+							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {entry.SmallData.Length} preload bytes, the directory tree can store at most {MaxPreloadSize}.");
 						}
 
 						WriteNullTerminated(entry.FileName);
@@ -1235,7 +1235,7 @@ namespace ValvePak
 
 				if (!CoversFile(fractions, file.Length))
 				{
-					if (file.Length > uint.MaxValue)
+					if (file.Length > MaxChunkFileSize)
 					{
 						throw new InvalidOperationException($"Chunk file {archiveIndex} is {file.Length} bytes, its hashes can only be computed for chunk files smaller than 4 GiB.");
 					}
@@ -1412,7 +1412,7 @@ namespace ValvePak
 			public void Append(ReadOnlySpan<byte> data)
 			{
 				// Offsets and lengths in the directory tree are 32-bit
-				if ((long)Length + data.Length > uint.MaxValue)
+				if ((long)Length + data.Length > MaxChunkFileSize)
 				{
 					throw new InvalidOperationException($"Chunk file {ArchiveIndex} would exceed 4 GiB.");
 				}

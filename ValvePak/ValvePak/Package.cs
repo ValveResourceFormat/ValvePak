@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -25,7 +26,27 @@ namespace ValvePak
 		/// <summary>
 		/// Archive index of entries whose data is in the directory file instead of a chunk file.
 		/// </summary>
-		internal const ushort DirectoryArchiveIndex = 0x7FFF;
+		public const ushort DirectoryArchiveIndex = 0x7FFF;
+
+		/// <summary>
+		/// Highest archive index of a chunk file.
+		/// </summary>
+		public const ushort MaxChunkIndex = 0x7FFE;
+
+		/// <summary>
+		/// Maximum size in bytes of the file data in a directory file.
+		/// </summary>
+		public const int MaxDirectoryFileDataSize = int.MaxValue;
+
+		/// <summary>
+		/// Maximum size in bytes of a chunk file.
+		/// </summary>
+		public const uint MaxChunkFileSize = uint.MaxValue;
+
+		/// <summary>
+		/// Maximum number of preload bytes (<see cref="PackageEntry.SmallData"/>) of an entry.
+		/// </summary>
+		public const ushort MaxPreloadSize = ushort.MaxValue;
 
 		/// <summary>
 		/// Maximum length in UTF-8 bytes of a <see cref="PackageEntry.TypeName"/>.
@@ -61,9 +82,20 @@ namespace ValvePak
 		public string? FileName { get; private set; }
 
 		/// <summary>
+		/// Gets the full path of the directory file that this package reads from, or null if it does not read from the start of a file.
+		/// </summary>
+		public string? FilePath => StreamOffset == 0 ? ReadFilePath : null;
+
+		/// <summary>
 		/// Gets whether this package had "_dir" in the name, indicating it has multiple chunk files.
 		/// </summary>
 		public bool IsDirVPK { get; private set; }
+
+		/// <summary>
+		/// Gets whether entries or chunk hashes of this package refer to chunk files, or files were added to chunk files.
+		/// Unlike <see cref="IsDirVPK"/>, this does not depend on the file name.
+		/// </summary>
+		public bool HasChunkFiles => HighestChunkIndex >= 0;
 
 		/// <summary>
 		/// Gets or sets the VPK version. This version is also used when writing the package.
@@ -155,6 +187,11 @@ namespace ValvePak
 		public Dictionary<string, List<PackageEntry>>? Entries { get; private set; }
 
 		/// <summary>
+		/// Gets the number of entries in the package.
+		/// </summary>
+		public int EntryCount => Entries?.Values.Sum(static entries => entries.Count) ?? 0;
+
+		/// <summary>
 		/// Gets the archive MD5 checksum section entries. Also known as cache line hashes.
 		/// </summary>
 		public List<ChunkHashFraction> AccessPackFileHashes { get; private set; } = [];
@@ -199,6 +236,14 @@ namespace ValvePak
 					Reader = null;
 				}
 			}
+		}
+
+		/// <summary>
+		/// Returns all entries of the package in no particular order, which must not be changed while they are enumerated.
+		/// </summary>
+		public IEnumerable<PackageEntry> EnumerateEntries()
+		{
+			return GetAllEntries();
 		}
 
 		private void ThrowIfAlreadyRead()

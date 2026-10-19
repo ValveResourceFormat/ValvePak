@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -635,6 +636,57 @@ namespace ValvePak.Test
 
 			await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
 			await Assert.That(() => package.VerifyChunkHashes(null)).ThrowsNothing();
+		}
+
+		[Test]
+		public async Task BuildsAndParsesChunkFilePaths()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"));
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.GetChunkFilePath(1)).IsEqualTo(Path.Combine(AppContext.BaseDirectory, "Files", "test_001.vpk"));
+				await Assert.That(Package.TryParseChunkFilePath("a_b_042.VPK", out var baseName, out var archiveIndex)).IsTrue();
+				await Assert.That(baseName).IsEqualTo("a_b");
+				await Assert.That(archiveIndex).IsEqualTo((ushort)42);
+				await Assert.That(Package.TryParseChunkFilePath("a_dir.vpk", out _, out _)).IsFalse();
+			}
+		}
+
+		[Test]
+		public async Task HasChunkFilesWithoutDirSuffix()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_without_suffix.vpk"));
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.HasChunkFiles).IsTrue();
+				await Assert.That(package.IsDirVPK).IsFalse();
+			}
+		}
+
+		[Test]
+		[Arguments("test_dir.vpk", (ushort)0)]
+		[Arguments("test_single.vpk", Package.DirectoryArchiveIndex)]
+		public async Task OpensArchiveStreamsAtEntryOffsets(string fileName, ushort archiveIndex)
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", fileName));
+
+			using var stream = package.OpenArchiveStream(archiveIndex);
+
+			foreach (var entry in package.EnumerateEntries().Where(entry => entry.ArchiveIndex == archiveIndex))
+			{
+				package.ReadEntry(entry, out var expected);
+				var data = new byte[entry.Length];
+
+				stream.Position = entry.Offset;
+				stream.ReadExactly(data);
+
+				await Assert.That(data).IsEquivalentTo(expected[entry.SmallData.Length..], CollectionOrdering.Matching);
+			}
 		}
 
 		[Test]
