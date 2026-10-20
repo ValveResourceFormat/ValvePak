@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -58,6 +58,8 @@ namespace ValvePak
 		/// </summary>
 		public const int MaxFileNameLength = 260;
 
+		private const int MaxStackPathLength = 256;
+
 		/// <summary>
 		/// Always '/' as per Valve's vpk implementation.
 		/// </summary>
@@ -72,6 +74,7 @@ namespace ValvePak
 		private long StreamOffset;
 
 		private string? ReadFilePath;
+		private bool IsReadFromAnotherPackage;
 
 		private readonly ConcurrentDictionary<ushort, Archive> Archives = new();
 		private readonly Lock ArchivesLock = new();
@@ -85,16 +88,6 @@ namespace ValvePak
 		/// Gets the full path of the directory file that this package reads from, or null if it does not read from the start of a file.
 		/// </summary>
 		public string? FilePath => StreamOffset == 0 ? ReadFilePath : null;
-
-		/// <summary>
-		/// Gets the package that this package was opened from with <see cref="OpenPackage"/>, which must stay open while this package is used.
-		/// </summary>
-		public Package? Parent { get; private set; }
-
-		/// <summary>
-		/// Gets the entry of <see cref="Parent"/> that this package was opened from.
-		/// </summary>
-		public PackageEntry? ParentEntry { get; private set; }
 
 		/// <summary>
 		/// Gets whether this package had "_dir" in the name, indicating it has multiple chunk files.
@@ -197,11 +190,6 @@ namespace ValvePak
 		public Dictionary<string, List<PackageEntry>>? Entries { get; private set; }
 
 		/// <summary>
-		/// Gets the number of entries in the package.
-		/// </summary>
-		public int EntryCount => Entries?.Values.Sum(static entries => entries.Count) ?? 0;
-
-		/// <summary>
 		/// Gets the archive MD5 checksum section entries. Also known as cache line hashes.
 		/// </summary>
 		public List<ChunkHashFraction> AccessPackFileHashes { get; private set; } = [];
@@ -246,14 +234,6 @@ namespace ValvePak
 					Reader = null;
 				}
 			}
-		}
-
-		/// <summary>
-		/// Returns all entries of the package in no particular order, which must not be changed while they are enumerated.
-		/// </summary>
-		public IEnumerable<PackageEntry> EnumerateEntries()
-		{
-			return GetAllEntries();
 		}
 
 		private void ThrowIfAlreadyRead()
@@ -331,7 +311,7 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Searches for the entry at the given path, which is normalized like <see cref="NormalizeEntryPath(string)"/> does.
+		/// Searches for the entry at the given path, which is normalized like <see cref="TryParseEntryPath"/> does.
 		///
 		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method uses a binary search.
 		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
@@ -348,7 +328,9 @@ namespace ValvePak
 		/// <inheritdoc cref="FindEntry(string)"/>
 		public PackageEntry? FindEntry(ReadOnlySpan<char> filePath)
 		{
-			if (SplitEntryPath(filePath, out var directory, out var fileName, out var typeName) != null)
+			Span<char> buffer = filePath.Length <= MaxStackPathLength || IsNormalizedPath(filePath) ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (SplitEntryPath(filePath, buffer, out var directory, out var fileName, out var typeName) != null)
 			{
 				return null;
 			}
@@ -432,22 +414,27 @@ namespace ValvePak
 		/// empty and "." segments are removed, ".." removes the segment before it, ASCII letters are lowercased, and the type name is split from the file name at its last dot.
 		/// </summary>
 		/// <param name="filePath">Full file path.</param>
-		/// <returns>The normalized path, or an empty string if the path does not end with a file name, has a ".." above the root,
-		/// or has a name longer than <see cref="MaxFileNameLength"/> or <see cref="MaxTypeNameLength"/>.</returns>
-		public static string NormalizeEntryPath(string filePath)
+		/// <param name="normalizedPath">The normalized path, or null if the path is rejected.</param>
+		/// <returns>True if a file can be stored at the path, false if it does not end with a file name, has a ".." above the root,
+		/// a null character or an unpaired surrogate, or has a name longer than <see cref="MaxFileNameLength"/> or <see cref="MaxTypeNameLength"/>.</returns>
+		public static bool TryParseEntryPath(string filePath, [NotNullWhen(true)] out string? normalizedPath)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
 
-			if (GetEntryPathError(filePath, out var directory, out var fileName, out var typeName) != null)
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (GetEntryPathError(filePath, buffer, out var directory, out var fileName, out var typeName) != null)
 			{
-				return string.Empty;
+				normalizedPath = null;
+				return false;
 			}
 
-			return JoinEntryPath(directory, fileName, typeName);
+			normalizedPath = JoinEntryPath(directory, fileName, typeName);
+			return true;
 		}
 
 		/// <summary>
-		/// Normalizes a directory path to the <see cref="PackageEntry.DirectoryName"/> of the files in it, like <see cref="NormalizeEntryPath(string)"/> normalizes directories.
+		/// Normalizes a directory path to the <see cref="PackageEntry.DirectoryName"/> of the files in it, like <see cref="TryParseEntryPath"/> normalizes directories.
 		/// </summary>
 		/// <param name="directoryPath">Directory path, which may end with a directory separator.</param>
 		/// <returns>The normalized path, or an empty string for the root directory or if the path has a ".." above the root.</returns>
@@ -455,7 +442,10 @@ namespace ValvePak
 		{
 			ArgumentNullException.ThrowIfNull(directoryPath);
 
-			if (SplitEntryPath(string.Concat(directoryPath, "/x"), out var directory, out _, out _) != null || directory is Space)
+			var filePath = string.Concat(directoryPath, "/x");
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (SplitEntryPath(filePath, buffer, out var directory, out _, out _) != null || directory is Space)
 			{
 				return string.Empty;
 			}
@@ -467,9 +457,9 @@ namespace ValvePak
 		/// Splits a file path like <see cref="SplitEntryPath"/> does and checks the lengths of the names.
 		/// </summary>
 		/// <returns>Why the path can not be stored, or null.</returns>
-		private static string? GetEntryPathError(ReadOnlySpan<char> path, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
+		private static string? GetEntryPathError(ReadOnlySpan<char> path, Span<char> buffer, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
 		{
-			var error = SplitEntryPath(path, out directory, out fileName, out typeName);
+			var error = SplitEntryPath(path, buffer, out directory, out fileName, out typeName);
 
 			if (error != null)
 			{
@@ -490,10 +480,11 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Normalizes a file path like <see cref="NormalizeEntryPath(string)"/> does and splits it into the directory, file and type names it is stored as.
+		/// Normalizes a file path like <see cref="TryParseEntryPath"/> does and splits it into the directory, file and type names it is stored as.
+		/// A path that normalizing changes is written into the buffer, which must be at least as long as the path.
 		/// </summary>
 		/// <returns>Why no file can be at the path, or null.</returns>
-		private static string? SplitEntryPath(ReadOnlySpan<char> path, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
+		private static string? SplitEntryPath(ReadOnlySpan<char> path, Span<char> buffer, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
 		{
 			directory = fileName = typeName = default;
 
@@ -502,41 +493,73 @@ namespace ValvePak
 				return "does not end with a file name";
 			}
 
+			if (HasInvalidCharacter(path))
+			{
+				return "has a null character or an unpaired surrogate";
+			}
+
 			var normalizedPath = path;
 
 			if (!IsNormalizedPath(path))
 			{
-				if (ResolveSegments(path) is not { } resolvedPath)
+				var length = ResolveSegments(path, buffer);
+
+				if (length < 0)
 				{
 					return "has a \"..\" segment above the root";
 				}
 
-				normalizedPath = resolvedPath;
+				normalizedPath = buffer[..length];
 			}
 
 			var lastSeparator = normalizedPath.LastIndexOf(DirectorySeparatorChar);
 			var file = normalizedPath[(lastSeparator + 1)..];
 			var dot = file.LastIndexOf('.');
 
-			if (dot == 0 || dot == file.Length - 1)
-			{
-				return "has a file name that is empty or ends with a dot";
-			}
-
 			directory = lastSeparator > -1 ? normalizedPath[..lastSeparator] : Space;
 			fileName = dot > -1 ? file[..dot] : file;
 			typeName = dot > -1 ? file[(dot + 1)..] : Space;
+
+			if (dot == 0 || dot == file.Length - 1 || (typeName is Space && fileName.EndsWith('.')))
+			{
+				directory = fileName = typeName = default;
+				return "has a file name that is empty or ends with a dot";
+			}
 
 			return null;
 		}
 
 		/// <summary>
-		/// Joins the segments of the path with '/' and lowercases ASCII letters, leaving out empty and "." segments and removing the segment before each "..".
+		/// Returns whether the path has a null character, which ends a name in the directory tree, or a surrogate that is not part of a pair, which UTF-8 can not encode.
 		/// </summary>
-		/// <returns>The resolved path, or null if a ".." has no segment before it.</returns>
-		private static string? ResolveSegments(ReadOnlySpan<char> path)
+		private static bool HasInvalidCharacter(ReadOnlySpan<char> path)
 		{
-			var buffer = new char[path.Length];
+			if (path.Contains('\0'))
+			{
+				return true;
+			}
+
+			int i;
+
+			while ((i = path.IndexOfAnyInRange('\uD800', '\uDFFF')) >= 0)
+			{
+				if (!char.IsHighSurrogate(path[i]) || i + 1 >= path.Length || !char.IsLowSurrogate(path[i + 1]))
+				{
+					return true;
+				}
+
+				path = path[(i + 2)..];
+			}
+
+			return false;
+		}
+
+		/// <summary>
+		/// Joins the segments of the path with '/' into the buffer and lowercases ASCII letters, leaving out empty and "." segments and removing the segment before each "..".
+		/// </summary>
+		/// <returns>The length of the resolved path, or -1 if a ".." has no segment before it.</returns>
+		private static int ResolveSegments(ReadOnlySpan<char> path, Span<char> buffer)
+		{
 			var length = 0;
 
 			foreach (var range in path.SplitAny(DirectorySeparatorChar, WindowsDirectorySeparator))
@@ -552,10 +575,10 @@ namespace ValvePak
 				{
 					if (length == 0)
 					{
-						return null;
+						return -1;
 					}
 
-					length = Math.Max(buffer.AsSpan(0, length).LastIndexOf(DirectorySeparatorChar), 0);
+					length = Math.Max(buffer[..length].LastIndexOf(DirectorySeparatorChar), 0);
 					continue;
 				}
 
@@ -570,7 +593,7 @@ namespace ValvePak
 				}
 			}
 
-			return new string(buffer, 0, length);
+			return length;
 		}
 
 		/// <summary>

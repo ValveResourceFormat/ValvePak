@@ -11,13 +11,20 @@ namespace ValvePak.Test
 		[Arguments("a/x/../b.txt", "a/b.txt")]
 		[Arguments("/a/b.txt", "a/b.txt")]
 		[Arguments("README", "readme")]
-		[Arguments("", "")]
-		[Arguments("../b.txt", "")]
-		[Arguments("a/b/", "")]
-		[Arguments(".gitignore", "")]
-		public async Task NormalizesEntryPaths(string path, string expected)
+		[Arguments("", null)]
+		[Arguments("../b.txt", null)]
+		[Arguments("a/b/", null)]
+		[Arguments(".gitignore", null)]
+		[Arguments("x.. ", null)]
+		[Arguments("a/b\0c.txt", null)]
+		[Arguments("a/\ud800.txt", null)]
+		public async Task NormalizesEntryPaths(string path, string? expected)
 		{
-			await Assert.That(Package.NormalizeEntryPath(path)).IsEqualTo(expected);
+			using (Assert.Multiple())
+			{
+				await Assert.That(Package.TryParseEntryPath(path, out var normalizedPath)).IsEqualTo(expected != null);
+				await Assert.That(normalizedPath).IsEqualTo(expected);
+			}
 		}
 
 		[Test]
@@ -25,8 +32,8 @@ namespace ValvePak.Test
 		{
 			using (Assert.Multiple())
 			{
-				await Assert.That(Package.NormalizeEntryPath($"a.{new string('y', 129)}")).IsEmpty();
-				await Assert.That(Package.NormalizeEntryPath($"{new string('é', 131)}.txt")).IsEmpty();
+				await Assert.That(Package.TryParseEntryPath($"a.{new string('y', 129)}", out _)).IsFalse();
+				await Assert.That(Package.TryParseEntryPath($"{new string('é', 131)}.txt", out _)).IsFalse();
 			}
 		}
 

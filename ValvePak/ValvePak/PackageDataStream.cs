@@ -4,13 +4,13 @@ using System.IO;
 namespace ValvePak
 {
 	/// <summary>
-	/// Read-only seekable stream over a range of an archive, which it reads from without owning it,
-	/// optionally preceded by bytes held in memory such as the preload bytes of an entry.
+	/// Read-only seekable stream over data stored in a package: bytes held in memory such as the preload bytes of an entry,
+	/// followed by a range of an archive, which it reads from without owning it. Either part can be empty.
 	/// </summary>
-	internal sealed class ArchiveRangeStream : Stream
+	internal sealed class PackageDataStream : Stream
 	{
 #pragma warning disable CA2213 // Disposable fields should be disposed
-		private readonly Archive Archive;
+		private readonly Archive? Archive;
 #pragma warning restore CA2213
 		private readonly long Start;
 		private readonly long RangeLength;
@@ -21,12 +21,20 @@ namespace ValvePak
 		/// <summary>
 		/// Creates a stream over the given range of the archive, which starts with <paramref name="prefix"/> if given.
 		/// </summary>
-		public ArchiveRangeStream(Archive archive, long start, long length, byte[]? prefix = null)
+		public PackageDataStream(Archive archive, long start, long length, byte[]? prefix = null)
 		{
 			Archive = archive;
 			Start = start;
 			RangeLength = length;
 			Prefix = prefix ?? [];
+		}
+
+		/// <summary>
+		/// Creates a stream over bytes held in memory.
+		/// </summary>
+		public PackageDataStream(byte[] data)
+		{
+			Prefix = data;
 		}
 
 		public override bool CanRead => !IsDisposed;
@@ -85,7 +93,7 @@ namespace ValvePak
 
 			var available = Length - position;
 
-			if (available <= 0 || buffer.IsEmpty)
+			if (available <= 0 || buffer.IsEmpty || Archive == null)
 			{
 				return prefixRead;
 			}
@@ -108,7 +116,7 @@ namespace ValvePak
 
 			var offset = position - Prefix.Length;
 
-			if (offset < 0 || length > RangeLength - offset)
+			if (Archive == null || offset < 0 || length > RangeLength - offset)
 			{
 				return null;
 			}

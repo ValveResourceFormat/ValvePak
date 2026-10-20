@@ -1,7 +1,6 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -652,22 +651,23 @@ namespace ValvePak.Test
 		[Arguments("test_single.vpk", "The package is not signed.", 0)]
 		[Arguments("test_dir.vpk", "The package is not signed.", 3)]
 		[Arguments("broken_dir.vpk", "The package is not signed.", 6)]
-		public async Task VerifyReportsCountFirstAndChecksCrcOfUnhashedEntries(string fileName, string signatureReport, int crcReports)
+		public async Task VerifyReportsStepsAndChecksCrcOfUnhashedEntries(string fileName, string signatureReport, int crcReports)
 		{
 			var path = Path.Combine(AppContext.BaseDirectory, "Files", fileName);
 
 			using var package = new Package();
 			package.Read(path);
 
-			var progress = new SynchronousProgress();
-			package.Verify(progress);
+			var reports = new List<(int Step, int StepCount, string Message)>();
+			package.Verify(new SynchronousProgress<(int Step, int StepCount, string Message)>(reports.Add));
 
 			using (Assert.Multiple())
 			{
-				await Assert.That(int.Parse(progress.Reports[0], CultureInfo.InvariantCulture)).IsEqualTo(progress.Reports.Count - 1);
-				await Assert.That(progress.Reports[1]).IsEqualTo(signatureReport);
-				await Assert.That(progress.Reports.Count(report => report.StartsWith("Verifying CRC32", StringComparison.Ordinal))).IsEqualTo(crcReports);
-				await Assert.That(progress.Reports[^1]).IsEqualTo("Verified the package.");
+				await Assert.That(reports.Select(static report => report.Step)).IsEquivalentTo(Enumerable.Range(1, reports.Count), CollectionOrdering.Matching);
+				await Assert.That(reports.All(report => report.StepCount == reports.Count)).IsTrue();
+				await Assert.That(reports[0].Message).IsEqualTo(signatureReport);
+				await Assert.That(reports.Count(static report => report.Message.StartsWith("Verifying CRC32", StringComparison.Ordinal))).IsEqualTo(crcReports);
+				await Assert.That(reports[^1].Message).IsEqualTo("Verified the package.");
 			}
 		}
 
@@ -720,7 +720,7 @@ namespace ValvePak.Test
 
 			using var stream = package.OpenArchiveStream(archiveIndex);
 
-			foreach (var entry in package.EnumerateEntries().Where(entry => entry.ArchiveIndex == archiveIndex))
+			foreach (var entry in package.Entries!.Values.SelectMany(static entries => entries).Where(entry => entry.ArchiveIndex == archiveIndex))
 			{
 				package.ReadEntry(entry, out var expected);
 				var data = new byte[entry.Length];
@@ -810,6 +810,11 @@ namespace ValvePak.Test
 		{
 			public List<string> Reports { get; } = [];
 			public void Report(string value) => Reports.Add(value);
+		}
+
+		private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
+		{
+			public void Report(T value) => report(value);
 		}
 
 		[Test]

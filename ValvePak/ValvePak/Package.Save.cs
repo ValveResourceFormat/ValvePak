@@ -90,11 +90,11 @@ namespace ValvePak
 		/// <summary>
 		/// Moves an entry in current package to a new path. Only the directory tree changes, the file data is not touched.
 		/// Be careful to not move it onto the path of another entry, because this does not check for duplicates.
-		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="entry">The package entry to rename.</param>
 		/// <param name="newFilePath">Full new file path for this entry.</param>
-		/// <exception cref="ArgumentException">The entry is not in this package, or the new path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
+		/// <exception cref="ArgumentException">The entry is not in this package, or the new path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public void RenameFile(PackageEntry entry, string newFilePath)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -210,7 +210,7 @@ namespace ValvePak
 
 		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
@@ -220,7 +220,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -245,7 +245,7 @@ namespace ValvePak
 		/// <summary>
 		/// Add file to current package, reading its data from the current position of the stream to its end.
 		/// Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized like <see cref="NormalizeEntryPath(string)"/> does.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
@@ -255,7 +255,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path is rejected, see <see cref="NormalizeEntryPath(string)"/>.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -426,9 +426,9 @@ namespace ValvePak
 
 		private string GetChunkBaseName()
 		{
-			if (Parent != null)
+			if (IsReadFromAnotherPackage)
 			{
-				throw new NotSupportedException("Chunk files of a package opened from an entry of another package are not supported.");
+				throw new NotSupportedException("Chunk files of a package read from an entry of another package are not supported.");
 			}
 
 			if (FileName == null)
@@ -455,21 +455,13 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Splits a file path into the directory, file and type names that <see cref="AddFile(string, byte[], bool)"/> stores it with, normalized like <see cref="NormalizeEntryPath(string)"/> does.
+		/// Splits a file path into the directory, file and type names that <see cref="AddFile(string, byte[], bool)"/> stores it with, normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
-		/// <param name="filePath">Full file path.</param>
-		/// <returns>The names, with a space for a missing directory or type name.</returns>
-		/// <exception cref="ArgumentException">The path is rejected.</exception>
-		public static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath)
-		{
-			ArgumentNullException.ThrowIfNull(filePath);
-
-			return ParseEntryPath(filePath, nameof(filePath));
-		}
-
 		private static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath, string paramName)
 		{
-			if (GetEntryPathError(filePath, out var directory, out var fileName, out var typeName) is { } error)
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (GetEntryPathError(filePath, buffer, out var directory, out var fileName, out var typeName) is { } error)
 			{
 				throw new ArgumentException($"'{filePath}' {error}.", paramName);
 			}
@@ -536,7 +528,7 @@ namespace ValvePak
 		/// this only writes the directory file, which refers to the data where it is in the chunk files.
 		/// Unless <paramref name="repack"/> is enabled, it must be written to the path the chunk files are named after, which should end with "_dir.vpk".
 		/// A package that was not read also deletes existing chunk files numbered after the ones it wrote, until a number has no file.
-		/// Hashes of chunk files are kept if they cover the whole file, computed again otherwise, and left out for chunk files that had none.
+		/// Hashes of chunk files are kept if they cover the whole file, and computed otherwise.
 		///
 		/// Writing over the file the package was read from, or repacking, writes temporary files that replace the existing files once all were written,
 		/// and the package reads from the written files afterwards. This must not run concurrently with reads from this package,
@@ -1235,7 +1227,7 @@ namespace ValvePak
 
 				if (!UpdatedChunkHashFractions.TryGetValue(archiveIndex, out var fractions) && !readFractions.TryGetValue(archiveIndex, out fractions))
 				{
-					continue;
+					fractions = [];
 				}
 
 				if (!CoversFile(fractions, file.Length))

@@ -625,8 +625,8 @@ namespace ValvePak.Test
 				await AssertEntryData(readBack, "added/embedded.bin", 300, 2);
 				await Assert.That(readBack.FindEntry("steammessages_base.proto")!.SmallData).Count().IsEqualTo(preload.Length);
 
-				// The read chunk file had no hashes, and data in the directory file is not hashed when there are chunk files
-				await Assert.That(readBack.AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex).ToArray()).IsEquivalentTo(new ushort[] { 2, 4 }, CollectionOrdering.Matching);
+				// Chunk files without hashes are hashed, and data in the directory file is not hashed when there are chunk files
+				await Assert.That(readBack.AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex).ToArray()).IsEquivalentTo(new ushort[] { 0, 1, 2, 3, 4 }, CollectionOrdering.Matching);
 			}
 
 			// Hashes that cover the whole chunk file are kept even when its data changed, and are computed again once it grew
@@ -906,7 +906,7 @@ namespace ValvePak.Test
 			using var readBack = new Package();
 			readBack.Read(dirPath);
 
-			await Assert.That(readBack.EnumerateEntries().All(static entry => entry.ArchiveIndex == 0)).IsTrue();
+			await Assert.That(readBack.Entries!.Values.SelectMany(static entries => entries).All(static entry => entry.ArchiveIndex == 0)).IsTrue();
 			await AssertEntryData(readBack, "a.bin", 400, 1);
 			await AssertEntryData(readBack, "b.bin", 300, 2);
 			await AssertPackageVerifies(readBack);
@@ -934,9 +934,8 @@ namespace ValvePak.Test
 			}
 
 			using var level0Package = Package.Open(path);
-			using var level1Package = level0Package.OpenPackage(level0Package.FindEntry("maps/level1.vpk")!);
-			var level2Entry = level1Package.FindEntry("maps/level2.vpk")!;
-			using var level2Package = level1Package.OpenPackage(level2Entry);
+			using var level1Package = OpenNestedPackage(level0Package, level0Package.FindEntry("maps/level1.vpk")!);
+			using var level2Package = OpenNestedPackage(level1Package, level1Package.FindEntry("maps/level2.vpk")!);
 
 			var leafEntry = level2Package.FindEntry("data/leaf.bin")!;
 			level2Package.ReadEntry(leafEntry, out var leafRead);
@@ -947,8 +946,6 @@ namespace ValvePak.Test
 			{
 				await Assert.That(leafRead).IsEquivalentTo(leafData, CollectionOrdering.Matching);
 				await Assert.That(mapped is UnmanagedMemoryStream).IsTrue();
-				await Assert.That(level2Package.Parent).IsSameReferenceAs(level1Package);
-				await Assert.That(level2Package.ParentEntry).IsSameReferenceAs(level2Entry);
 			}
 
 			level1Package.Dispose();
@@ -972,13 +969,23 @@ namespace ValvePak.Test
 			using var outer = new Package();
 			outer.AddFile("maps/inner_dir.vpk", innerDirectoryFile.ToArray());
 
-			using var nested = outer.OpenPackage(outer.FindEntry("maps/inner_dir.vpk")!);
+			using var nested = OpenNestedPackage(outer, outer.FindEntry("maps/inner_dir.vpk")!);
 
 			using (Assert.Multiple())
 			{
 				await Assert.That(() => nested.ReadEntry(nested.FindEntry("embedded.bin")!, out _)).ThrowsNothing();
 				await Assert.That(() => nested.ReadEntry(nested.FindEntry("chunked.bin")!, out _)).ThrowsExactly<NotSupportedException>();
 			}
+		}
+
+		private static Package OpenNestedPackage(Package outer, PackageEntry entry)
+		{
+			var package = new Package();
+			package.OptimizeEntriesForBinarySearch();
+			package.SetFileName(entry.GetFullPath());
+			package.Read(outer.OpenEntryStream(entry));
+
+			return package;
 		}
 
 		private static byte[] CreatePackageBytes(Action<Package> addFiles)

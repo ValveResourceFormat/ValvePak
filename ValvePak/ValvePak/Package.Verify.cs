@@ -1,7 +1,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -38,36 +37,49 @@ namespace ValvePak
 		/// <summary>
 		/// Verifies the signature, the checksums, the chunk hashes, and the CRC32 checksum of each entry whose data no checksum or chunk hash covers.
 		/// </summary>
-		/// <param name="progressReporter">If provided, will report the number of reports that follow first, then a string for each step.</param>
+		/// <param name="progressReporter">If provided, will report each step with its number starting at 1, the number of steps, and a message.</param>
 		/// <param name="cancellationToken">A token to cancel the verification.</param>
 		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
 		/// <exception cref="InvalidDataException">The signature is not valid, or a checksum, chunk hash or CRC32 checksum does not match.</exception>
-		public void Verify(IProgress<string>? progressReporter = null, CancellationToken cancellationToken = default)
+		public void Verify(IProgress<(int Step, int StepCount, string Message)>? progressReporter = null, CancellationToken cancellationToken = default)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
 			ThrowIfDirectoryFileClosed();
 
 			var entriesWithUnhashedData = GetEntriesWithUnhashedData();
-			var reportCount = 3 + AccessPackFileHashes.Count + entriesWithUnhashedData.Count;
-
-			progressReporter?.Report(reportCount.ToString(CultureInfo.InvariantCulture));
+			var stepProgress = progressReporter == null
+				? null
+				: new StepProgress(progressReporter, 3 + AccessPackFileHashes.Count + entriesWithUnhashedData.Count);
 
 			if (IsSigned && !IsSignatureValid(cancellationToken))
 			{
 				throw new InvalidDataException("The package signature is not valid.");
 			}
 
-			progressReporter?.Report(IsSigned ? "Verified the package signature." : "The package is not signed.");
+			stepProgress?.Report(IsSigned ? "Verified the package signature." : "The package is not signed.");
 
 			var checksumMessages = VerifyChecksums(cancellationToken);
 
-			progressReporter?.Report(checksumMessages.Count > 0 ? string.Join(' ', checksumMessages) : "Verified the package checksums.");
+			stepProgress?.Report(checksumMessages.Count > 0 ? string.Join(' ', checksumMessages) : "Verified the package checksums.");
 
-			VerifyChunkHashFractions(progressReporter, cancellationToken);
-			VerifyEntryChecksums(entriesWithUnhashedData, progressReporter, cancellationToken);
+			VerifyChunkHashFractions(stepProgress, cancellationToken);
+			VerifyEntryChecksums(entriesWithUnhashedData, stepProgress, cancellationToken);
 
-			progressReporter?.Report("Verified the package.");
+			stepProgress?.Report("Verified the package.");
+		}
+
+		/// <summary>
+		/// Numbers the messages of <see cref="Verify"/> before passing them on.
+		/// </summary>
+		private sealed class StepProgress(IProgress<(int Step, int StepCount, string Message)> progressReporter, int stepCount) : IProgress<string>
+		{
+			private int Step;
+
+			public void Report(string value)
+			{
+				progressReporter.Report((++Step, stepCount, value));
+			}
 		}
 
 		/// <summary>
@@ -104,9 +116,22 @@ namespace ValvePak
 				return true;
 			}
 
+			if (!hashedRanges.TryGetValue(entry.ArchiveIndex, out var ranges))
+			{
+				return false;
+			}
+
 			var end = (long)entry.Offset + entry.Length;
 
-			return hashedRanges.TryGetValue(entry.ArchiveIndex, out var ranges) && ranges.Exists(range => range.Start <= entry.Offset && end <= range.End);
+			foreach (var (start, rangeEnd) in ranges)
+			{
+				if (start <= entry.Offset && end <= rangeEnd)
+				{
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		/// <summary>
@@ -354,6 +379,7 @@ namespace ValvePak
 		private void VerifyEntryChecksums(IEnumerable<PackageEntry> entries, IProgress<string>? progressReporter, CancellationToken cancellationToken)
 		{
 			var crc = new Crc32();
+			Action<ReadOnlySpan<byte>> appendToCrc = crc.Append;
 
 			foreach (var entry in entries)
 			{
@@ -369,7 +395,7 @@ namespace ValvePak
 				}
 				else
 				{
-					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, crc.Append);
+					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, appendToCrc);
 				}
 
 				var actualChecksum = crc.GetCurrentHashAsUInt32();

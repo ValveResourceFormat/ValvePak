@@ -115,7 +115,13 @@ var entry = package.FindEntry("path/to/file.txt");
 using var stream = package.GetMemoryMappedStreamIfPossible(entry);
 ```
 
-`OpenPackage` opens a VPK stored in an entry of another VPK without extracting it.
+`OpenEntryStream` returns a seekable stream that reads an entry in place. A VPK stored in an entry of another VPK can be read from it without extracting it:
+
+```csharp
+using var inner = new Package();
+inner.SetFileName(entry.GetFullPath());
+inner.Read(package.OpenEntryStream(entry));
+```
 
 ## Optimize for many lookups
 
