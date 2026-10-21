@@ -7,7 +7,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -229,10 +228,26 @@ namespace ValvePak
 		private List<PackageEntry> GetEntriesInDirectory(string directory)
 		{
 			var comparison = Comparer?.Comparison ?? StringComparison.Ordinal;
+			var entries = new List<PackageEntry>();
 
-			return [.. GetAllEntries().Where(entry => entry.DirectoryName.Length >= directory.Length
-				&& (entry.DirectoryName.Length == directory.Length || entry.DirectoryName[directory.Length] == DirectorySeparatorChar)
-				&& entry.DirectoryName.AsSpan(0, directory.Length).Equals(directory, comparison))];
+			foreach (var entry in GetAllEntries())
+			{
+				var entryDirectory = entry.DirectoryName;
+
+				if (entryDirectory.Length < directory.Length)
+				{
+					continue;
+				}
+
+				var isInSubdirectory = entryDirectory.Length == directory.Length || entryDirectory[directory.Length] == DirectorySeparatorChar;
+
+				if (isInSubdirectory && entryDirectory.AsSpan(0, directory.Length).Equals(directory, comparison))
+				{
+					entries.Add(entry);
+				}
+			}
+
+			return entries;
 		}
 
 		private void RemoveEntries(List<PackageEntry> entries)
@@ -242,9 +257,15 @@ namespace ValvePak
 				return;
 			}
 
-			var removed = entries.ToHashSet();
+			var removed = new HashSet<PackageEntry>(entries);
+			var typeNames = new HashSet<string>(Entries!.Comparer);
 
-			foreach (var typeName in removed.Select(static entry => entry.TypeName).Distinct(Entries!.Comparer))
+			foreach (var entry in entries)
+			{
+				typeNames.Add(entry.TypeName);
+			}
+
+			foreach (var typeName in typeNames)
 			{
 				var typeEntries = Entries[typeName];
 				typeEntries.RemoveAll(removed.Contains);
@@ -454,9 +475,9 @@ namespace ValvePak
 
 		private static void ThrowIfChunkLimitReached(int archiveIndex)
 		{
-			if (archiveIndex > MaxChunkIndex)
+			if (archiveIndex >= DirectoryArchiveIndex)
 			{
-				throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
+				throw new InvalidOperationException($"Reached the maximum amount of chunk files ({DirectoryArchiveIndex}).");
 			}
 		}
 
@@ -546,17 +567,35 @@ namespace ValvePak
 			}
 		}
 
-		private IEnumerable<PackageEntry> GetAllEntries()
+		private int GetEntryCount()
 		{
-			return Entries?.Values.SelectMany(static entries => entries) ?? [];
+			var count = 0;
+
+			if (Entries != null)
+			{
+				foreach (var typeEntries in Entries.Values)
+				{
+					count += typeEntries.Count;
+				}
+			}
+
+			return count;
 		}
 
-		/// <summary>
-		/// Returns the archive indices of the entries with data in chunk files.
-		/// </summary>
-		private IEnumerable<ushort> GetChunkIndicesWithData()
+		private IEnumerable<PackageEntry> GetAllEntries()
 		{
-			return GetAllEntries().Where(IsInChunkFile).Select(static entry => entry.ArchiveIndex);
+			if (Entries == null)
+			{
+				yield break;
+			}
+
+			foreach (var typeEntries in Entries.Values)
+			{
+				foreach (var entry in typeEntries)
+				{
+					yield return entry;
+				}
+			}
 		}
 
 		private static bool IsInChunkFile(PackageEntry entry)
@@ -668,7 +707,7 @@ namespace ValvePak
 
 				if (repack)
 				{
-					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, isDirVpk && HighestChunkIndex < 0, token, chunkReplacements);
+					chunkLocations = WriteRepackedChunkFiles(entries, baseName, isDirVpk && HighestChunkIndex < 0, token, chunkReplacements, out chunkHashFractions);
 				}
 				else
 				{
@@ -685,11 +724,7 @@ namespace ValvePak
 				if (repack)
 				{
 					FinishCurrentChunkFile();
-
-					foreach (var archiveIndex in Archives.Keys.Where(static archiveIndex => archiveIndex != DirectoryArchiveIndex))
-					{
-						CloseArchive(archiveIndex);
-					}
+					CloseChunkArchives();
 				}
 
 				var backupPaths = ReplaceFilesOrReopen(chunkReplacements, directoryReplacement, token, replacesReadFile);
@@ -766,9 +801,26 @@ namespace ValvePak
 			HighestChunkIndex = chunkFileCount - 1;
 			UpdatedChunkHashFractions.Clear();
 
-			foreach (var fractions in (chunkHashFractions ?? []).GroupBy(static fraction => fraction.ArchiveIndex))
+			if (chunkHashFractions != null)
 			{
-				UpdatedChunkHashFractions[fractions.Key] = [.. fractions];
+				AddFractionsByArchive(UpdatedChunkHashFractions, chunkHashFractions);
+			}
+		}
+
+		/// <summary>
+		/// Adds each fraction to the list of its archive in <paramref name="fractionsByArchive"/>, creating the lists that are missing.
+		/// </summary>
+		private static void AddFractionsByArchive(Dictionary<ushort, List<ChunkHashFraction>> fractionsByArchive, List<ChunkHashFraction> fractions)
+		{
+			foreach (var fraction in fractions)
+			{
+				if (!fractionsByArchive.TryGetValue(fraction.ArchiveIndex, out var archiveFractions))
+				{
+					archiveFractions = [];
+					fractionsByArchive.Add(fraction.ArchiveIndex, archiveFractions);
+				}
+
+				archiveFractions.Add(fraction);
 			}
 		}
 
@@ -823,15 +875,18 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Copies the data of all entries in chunk files, and optionally in the directory file, into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>.
+		/// Copies the data of all entries in chunk files, and optionally in the directory file, into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>,
+		/// and sets <paramref name="hashFractions"/> to the hashes of the new chunk files, or to null if there are none.
 		/// </summary>
-		/// <returns>Where the data of each copied entry was written to, and the hashes of the new chunk files or null if there are none.</returns>
-		private (Dictionary<PackageEntry, ChunkLocation> Locations, List<ChunkHashFraction>? HashFractions) WriteRepackedChunkFiles(
-			List<PackageEntry> entries, string baseName, bool includesDirectoryFileData, string token, List<FileReplacement> replacements)
+		/// <returns>Where the data of each copied entry was written to.</returns>
+		private Dictionary<PackageEntry, ChunkLocation> WriteRepackedChunkFiles(
+			List<PackageEntry> entries, string baseName, bool includesDirectoryFileData, string token, List<FileReplacement> replacements, out List<ChunkHashFraction>? hashFractions)
 		{
 			var locations = new Dictionary<PackageEntry, ChunkLocation>();
-			var hashFractions = new List<ChunkHashFraction>();
+			var writtenFractions = new List<ChunkHashFraction>();
+			hashFractions = null;
 			ChunkFileWriter? chunkFile = null;
+			Action<ReadOnlySpan<byte>>? writeToChunkFile = null;
 
 			try
 			{
@@ -854,11 +909,12 @@ namespace ValvePak
 
 						if (chunkFile != null)
 						{
-							hashFractions.AddRange(chunkFile.GetHashFractions());
+							writtenFractions.AddRange(chunkFile.GetHashFractions());
 							chunkFile.Dispose();
 						}
 
 						chunkFile = nextChunkFile;
+						writeToChunkFile = chunkFile.Write;
 					}
 
 					locations[entry] = new ChunkLocation(chunkFile.ArchiveIndex, chunkFile.Length);
@@ -869,18 +925,19 @@ namespace ValvePak
 					}
 					else
 					{
-						ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, chunkFile.Write);
+						ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, writeToChunkFile!);
 					}
 				}
 
 				if (chunkFile == null)
 				{
-					return (locations, null);
+					return locations;
 				}
 
-				hashFractions.AddRange(chunkFile.GetHashFractions());
+				writtenFractions.AddRange(chunkFile.GetHashFractions());
+				hashFractions = writtenFractions;
 
-				return (locations, hashFractions);
+				return locations;
 			}
 			finally
 			{
@@ -910,11 +967,14 @@ namespace ValvePak
 					}
 				}
 
-				foreach (var (temporaryPath, path) in chunkReplacements.Append(directoryReplacement))
+				foreach (var (temporaryPath, path) in chunkReplacements)
 				{
 					File.Move(temporaryPath, path, overwrite: true);
 					replaced.Add(path);
 				}
+
+				File.Move(directoryReplacement.TemporaryPath, directoryReplacement.Path, overwrite: true);
+				replaced.Add(directoryReplacement.Path);
 			}
 			catch (Exception exception)
 			{
@@ -932,9 +992,12 @@ namespace ValvePak
 					}
 				}
 
-				foreach (var path in replaced.Where(path => !backups.ContainsKey(path)))
+				foreach (var path in replaced)
 				{
-					Undo(() => File.Delete(path));
+					if (!backups.ContainsKey(path))
+					{
+						Undo(() => File.Delete(path));
+					}
 				}
 
 				foreach (var (path, backupPath) in backups)
@@ -1029,17 +1092,25 @@ namespace ValvePak
 		/// </summary>
 		private List<PackageEntry> GetEntriesInTreeOrder()
 		{
-			var entries = GetAllEntries().ToList();
+			var entries = new List<PackageEntry>(GetEntryCount());
+			var readsDirectoryFile = false;
 
-			foreach (var entry in entries)
+			foreach (var entry in GetAllEntries())
 			{
 				if (entry.FileName.Length == 0 || entry.TypeName.Length == 0)
 				{
 					throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has an empty file name or extension, which the directory tree can not store.");
 				}
+
+				if (IsInDirectoryFile(entry) && entry.PendingData == null)
+				{
+					readsDirectoryFile = true;
+				}
+
+				entries.Add(entry);
 			}
 
-			if (entries.Exists(static entry => IsInDirectoryFile(entry) && entry.PendingData == null))
+			if (readsDirectoryFile)
 			{
 				ThrowIfDirectoryFileClosed();
 			}
@@ -1076,6 +1147,11 @@ namespace ValvePak
 			return entry.DirectoryName.Length == 0 ? Space : entry.DirectoryName;
 		}
 
+		private static bool IsInTreeDirectory(PackageEntry entry, string typeName, string directoryName)
+		{
+			return entry.TypeName == typeName && GetTreeDirectoryName(entry) == directoryName;
+		}
+
 		/// <summary>
 		/// Writes the directory file, with entries in chunk files where they are unless they are in <paramref name="chunkLocations"/>.
 		/// </summary>
@@ -1090,23 +1166,36 @@ namespace ValvePak
 			uint embeddedDataOffset = 0;
 
 			const byte NullByte = 0;
+			const int MaxStackNameLength = 512;
 
 			void WriteNullTerminated(string value)
 			{
-				writer.Write(Encoding.UTF8.GetBytes(value));
-				writer.Write(NullByte);
+				var length = Encoding.UTF8.GetByteCount(value);
+				Span<byte> bytes = length < MaxStackNameLength ? stackalloc byte[MaxStackNameLength] : new byte[length + 1];
+
+				Encoding.UTF8.GetBytes(value, bytes);
+				bytes[length] = NullByte;
+				writer.Write(bytes[..(length + 1)]);
 			}
 
-			foreach (var typeEntries in entries.GroupBy(static entry => entry.TypeName))
+			// Entries are sorted in tree order, so entries with the same type and directory follow each other
+			var index = 0;
+
+			while (index < entries.Count)
 			{
-				WriteNullTerminated(typeEntries.Key);
+				var typeName = entries[index].TypeName;
+				WriteNullTerminated(typeName);
 
-				foreach (var directoryEntries in typeEntries.GroupBy(GetTreeDirectoryName))
+				while (index < entries.Count && entries[index].TypeName == typeName)
 				{
-					WriteNullTerminated(directoryEntries.Key);
+					var directoryName = GetTreeDirectoryName(entries[index]);
+					WriteNullTerminated(directoryName);
 
-					foreach (var entry in directoryEntries)
+					while (index < entries.Count && IsInTreeDirectory(entries[index], typeName, directoryName))
 					{
+						var entry = entries[index];
+						index++;
+
 						var archiveIndex = entry.ArchiveIndex;
 						var fileOffset = entry.Offset;
 
@@ -1183,15 +1272,28 @@ namespace ValvePak
 			WriteAndHash(header);
 			WriteAndHash(treeData);
 
-			foreach (var entry in embeddedEntries)
+			void WriteEmbeddedData(ReadOnlySpan<byte> data)
 			{
-				var data = GetEmbeddedData(entry);
 				WriteAndHash(data);
 
 				// Data in the directory file is only hashed in packages without chunk files
 				if (chunkHashFractions == null)
 				{
 					embeddedDataHashes.Append(data);
+				}
+			}
+
+			Action<ReadOnlySpan<byte>> writeEmbeddedData = WriteEmbeddedData;
+
+			foreach (var entry in embeddedEntries)
+			{
+				if (entry.PendingData != null)
+				{
+					WriteEmbeddedData(entry.PendingData);
+				}
+				else
+				{
+					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, writeEmbeddedData);
 				}
 			}
 
@@ -1244,11 +1346,25 @@ namespace ValvePak
 			}
 
 			var baseName = GetChunkBaseName();
-			var readFractions = AccessPackFileHashes
-				.Where(static fraction => fraction.ArchiveIndex != DirectoryArchiveIndex)
-				.GroupBy(static fraction => fraction.ArchiveIndex)
-				.ToDictionary(static fractions => fractions.Key, static fractions => fractions.OrderBy(static fraction => fraction.Offset).ToList());
-			var usedArchiveIndices = GetChunkIndicesWithData().ToHashSet();
+			var readFractions = new Dictionary<ushort, List<ChunkHashFraction>>();
+			AddFractionsByArchive(readFractions, AccessPackFileHashes);
+			readFractions.Remove(DirectoryArchiveIndex);
+
+			foreach (var fractions in readFractions.Values)
+			{
+				fractions.Sort(CompareFractionPosition);
+			}
+
+			var usedArchiveIndices = new HashSet<ushort>();
+
+			foreach (var entry in GetAllEntries())
+			{
+				if (IsInChunkFile(entry))
+				{
+					usedArchiveIndices.Add(entry.ArchiveIndex);
+				}
+			}
+
 			var hashFractions = new List<ChunkHashFraction>();
 
 			for (var i = 0; i <= HighestChunkIndex; i++)
@@ -1332,22 +1448,6 @@ namespace ValvePak
 			{
 				ArrayPool<byte>.Shared.Return(buffer);
 			}
-		}
-
-		/// <summary>
-		/// Returns the data of an entry that is written into the directory file, without its preload bytes.
-		/// </summary>
-		private byte[] GetEmbeddedData(PackageEntry entry)
-		{
-			if (entry.PendingData != null)
-			{
-				return entry.PendingData;
-			}
-
-			var data = new byte[entry.Length];
-			ReadArchiveDataExactly(entry.ArchiveIndex, entry.Offset, data);
-
-			return data;
 		}
 
 		private static byte[] SerializeChunkHashFractions(List<ChunkHashFraction> fractions)

@@ -7,7 +7,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -63,15 +62,38 @@ namespace ValvePak
 			ReadSections();
 
 			IsReadPackage = true;
-			HighestChunkIndex = GetChunkIndicesWithData()
-				.Concat(AccessPackFileHashes.Select(static fraction => fraction.ArchiveIndex))
-				.Where(static archiveIndex => archiveIndex < DirectoryArchiveIndex)
-				.Max(static archiveIndex => (int?)archiveIndex) ?? -1;
+			HighestChunkIndex = GetHighestReferencedChunkIndex();
 
 			if (HighestChunkIndex >= 0 && !IsReadFromAnotherPackage)
 			{
 				ChunkBaseName = Path.GetFullPath(FileName);
 			}
+		}
+
+		/// <summary>
+		/// Returns the highest chunk file index that an entry with data or a chunk hash fraction refers to, or -1 if there is none.
+		/// </summary>
+		private int GetHighestReferencedChunkIndex()
+		{
+			var highestIndex = -1;
+
+			foreach (var entry in GetAllEntries())
+			{
+				if (IsInChunkFile(entry) && entry.ArchiveIndex < DirectoryArchiveIndex)
+				{
+					highestIndex = Math.Max(highestIndex, entry.ArchiveIndex);
+				}
+			}
+
+			foreach (var fraction in AccessPackFileHashes)
+			{
+				if (fraction.ArchiveIndex < DirectoryArchiveIndex)
+				{
+					highestIndex = Math.Max(highestIndex, fraction.ArchiveIndex);
+				}
+			}
+
+			return highestIndex;
 		}
 
 		/// <summary>
@@ -613,6 +635,17 @@ namespace ValvePak
 			}
 		}
 
+		private void CloseChunkArchives()
+		{
+			foreach (var archiveIndex in Archives.Keys)
+			{
+				if (archiveIndex != DirectoryArchiveIndex)
+				{
+					CloseArchive(archiveIndex);
+				}
+			}
+		}
+
 		private void CloseDirectoryFile()
 		{
 			CloseArchive(DirectoryArchiveIndex);
@@ -684,11 +717,11 @@ namespace ValvePak
 		/// <summary>
 		/// Returns the full path of a chunk file of this package, which does not have to exist, such as "pak01_003.vpk" for "pak01_dir.vpk".
 		/// </summary>
-		/// <param name="archiveIndex">Index of the chunk file, up to <see cref="MaxChunkIndex"/>.</param>
+		/// <param name="archiveIndex">Index of the chunk file, below <see cref="DirectoryArchiveIndex"/>.</param>
 		/// <exception cref="InvalidOperationException">The package has no file name.</exception>
 		public string GetChunkFilePath(ushort archiveIndex)
 		{
-			ArgumentOutOfRangeException.ThrowIfGreaterThan(archiveIndex, MaxChunkIndex);
+			ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(archiveIndex, DirectoryArchiveIndex);
 
 			return GetArchiveIndexFullFilePath(GetChunkBaseName(), archiveIndex);
 		}
@@ -732,7 +765,7 @@ namespace ValvePak
 
 			var index = int.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
 
-			if (index > MaxChunkIndex)
+			if (index >= DirectoryArchiveIndex)
 			{
 				return false;
 			}

@@ -3,7 +3,6 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Hashing;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 
@@ -87,21 +86,72 @@ namespace ValvePak
 		/// </summary>
 		private List<PackageEntry> GetEntriesWithUnhashedData()
 		{
-			var ranges = AccessPackFileHashes.Select(static fraction => (fraction.ArchiveIndex, Start: (long)fraction.Offset, End: (long)fraction.Offset + fraction.Length));
+			var hashedRanges = new Dictionary<ushort, List<(long Start, long End)>>();
+
+			foreach (var fraction in AccessPackFileHashes)
+			{
+				AddHashedRange(hashedRanges, fraction.ArchiveIndex, fraction.Offset, (long)fraction.Offset + fraction.Length);
+			}
 
 			if (Version != 1)
 			{
-				ranges = ranges.Append((DirectoryArchiveIndex, 0, FileDataSectionSize));
+				AddHashedRange(hashedRanges, DirectoryArchiveIndex, 0, FileDataSectionSize);
 			}
 
-			var hashedRanges = ranges
-				.GroupBy(static range => range.ArchiveIndex)
-				.ToDictionary(static group => group.Key, static group => MergeRanges(group.Select(static range => (range.Start, range.End))));
+			foreach (var ranges in hashedRanges.Values)
+			{
+				MergeRanges(ranges);
+			}
 
-			return [.. GetAllEntries()
-				.Where(entry => !IsDataHashed(entry, hashedRanges))
-				.OrderBy(static entry => entry.ArchiveIndex)
-				.ThenBy(static entry => entry.Offset)];
+			var entries = new List<PackageEntry>();
+
+			foreach (var entry in GetAllEntries())
+			{
+				if (!IsDataHashed(entry, hashedRanges))
+				{
+					entries.Add(entry);
+				}
+			}
+
+			entries.Sort(CompareDataPosition);
+
+			return entries;
+		}
+
+		private static void AddHashedRange(Dictionary<ushort, List<(long Start, long End)>> hashedRanges, ushort archiveIndex, long start, long end)
+		{
+			if (!hashedRanges.TryGetValue(archiveIndex, out var ranges))
+			{
+				ranges = [];
+				hashedRanges.Add(archiveIndex, ranges);
+			}
+
+			ranges.Add((start, end));
+		}
+
+		/// <summary>
+		/// Compares entries by archive, then by offset, then in tree order so that entries at the same position are sorted the same way every time.
+		/// </summary>
+		private static int CompareDataPosition(PackageEntry x, PackageEntry y)
+		{
+			var comparison = x.ArchiveIndex.CompareTo(y.ArchiveIndex);
+
+			if (comparison == 0)
+			{
+				comparison = x.Offset.CompareTo(y.Offset);
+			}
+
+			return comparison != 0 ? comparison : CompareTreeOrder(x, y);
+		}
+
+		/// <summary>
+		/// Compares chunk hash fractions by archive, then by offset.
+		/// </summary>
+		private static int CompareFractionPosition(ChunkHashFraction x, ChunkHashFraction y)
+		{
+			var comparison = x.ArchiveIndex.CompareTo(y.ArchiveIndex);
+
+			return comparison != 0 ? comparison : x.Offset.CompareTo(y.Offset);
 		}
 
 		private bool IsDataHashed(PackageEntry entry, Dictionary<ushort, List<(long Start, long End)>> hashedRanges)
@@ -135,25 +185,30 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Sorts the ranges and joins those that overlap or touch.
+		/// Sorts the ranges and joins those that overlap or touch, in place.
 		/// </summary>
-		private static List<(long Start, long End)> MergeRanges(IEnumerable<(long Start, long End)> ranges)
+		private static void MergeRanges(List<(long Start, long End)> ranges)
 		{
-			var merged = new List<(long Start, long End)>();
+			ranges.Sort(static (x, y) => x.Start.CompareTo(y.Start));
 
-			foreach (var range in ranges.OrderBy(static range => range.Start))
+			var mergedCount = 0;
+
+			for (var i = 0; i < ranges.Count; i++)
 			{
-				if (merged.Count > 0 && range.Start <= merged[^1].End)
+				var range = ranges[i];
+
+				if (mergedCount > 0 && range.Start <= ranges[mergedCount - 1].End)
 				{
-					merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, range.End));
+					var last = ranges[mergedCount - 1];
+					ranges[mergedCount - 1] = (last.Start, Math.Max(last.End, range.End));
 				}
 				else
 				{
-					merged.Add(range);
+					ranges[mergedCount++] = range;
 				}
 			}
 
-			return merged;
+			ranges.RemoveRange(mergedCount, ranges.Count - mergedCount);
 		}
 
 		/// <summary>
@@ -286,67 +341,73 @@ namespace ValvePak
 		private void VerifyChunkHashFractions(IProgress<string>? progressReporter, CancellationToken cancellationToken)
 		{
 			// When created by Valve, entries are sorted, and are 1MB chunks
-			var allEntries = AccessPackFileHashes
-				.OrderBy(file => file.ArchiveIndex)
-				.ThenBy(file => file.Offset);
+			var allEntries = new List<ChunkHashFraction>(AccessPackFileHashes);
+			allEntries.Sort(CompareFractionPosition);
 
-			var buffer = new byte[ChunkHashBufferSize];
+			var buffer = ArrayPool<byte>.Shared.Rent((int)ChunkHashBufferSize);
 			Span<byte> hash = stackalloc byte[16];
 
 			using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
 			using var blake3 = Blake3.Hasher.New();
 
-			foreach (var entry in allEntries)
+			try
 			{
-				cancellationToken.ThrowIfCancellationRequested();
-
-				var hashTypeName = entry.HashType switch
+				foreach (var entry in allEntries)
 				{
-					EHashType.Blake3 => "Blake3",
-					EHashType.MD5 => "MD5",
-					_ => throw new InvalidDataException($"Unrecognized hash type: {entry.HashType} ({(ushort)entry.HashType})"),
-				};
+					cancellationToken.ThrowIfCancellationRequested();
 
-				progressReporter?.Report($"Verifying {hashTypeName} hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
-
-				for (long position = 0; position < entry.Length;)
-				{
-					var length = (int)Math.Min(entry.Length - position, buffer.Length);
-					var bytesRead = ReadArchiveData(entry.ArchiveIndex, entry.Offset + position, buffer.AsSpan(0, length));
-
-					if (bytesRead == 0)
+					var hashTypeName = entry.HashType switch
 					{
-						break;
-					}
+						EHashType.Blake3 => "Blake3",
+						EHashType.MD5 => "MD5",
+						_ => throw new InvalidDataException($"Unrecognized hash type: {entry.HashType} ({(ushort)entry.HashType})"),
+					};
 
-					var data = buffer.AsSpan(0, bytesRead);
+					progressReporter?.Report($"Verifying {hashTypeName} hash at offset {entry.Offset} in archive {entry.ArchiveIndex}.");
+
+					for (long position = 0; position < entry.Length;)
+					{
+						var length = (int)Math.Min(entry.Length - position, ChunkHashBufferSize);
+						var bytesRead = ReadArchiveData(entry.ArchiveIndex, entry.Offset + position, buffer.AsSpan(0, length));
+
+						if (bytesRead == 0)
+						{
+							break;
+						}
+
+						var data = buffer.AsSpan(0, bytesRead);
+
+						if (entry.HashType == EHashType.Blake3)
+						{
+							blake3.Update(data);
+						}
+						else
+						{
+							md5.AppendData(data);
+						}
+
+						position += bytesRead;
+					}
 
 					if (entry.HashType == EHashType.Blake3)
 					{
-						blake3.Update(data);
+						blake3.Finalize(hash);
+						blake3.Reset();
 					}
 					else
 					{
-						md5.AppendData(data);
+						md5.GetHashAndReset(hash);
 					}
 
-					position += bytesRead;
+					if (!hash.SequenceEqual(entry.Checksum))
+					{
+						throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
+					}
 				}
-
-				if (entry.HashType == EHashType.Blake3)
-				{
-					blake3.Finalize(hash);
-					blake3.Reset();
-				}
-				else
-				{
-					md5.GetHashAndReset(hash);
-				}
-
-				if (!hash.SequenceEqual(entry.Checksum))
-				{
-					throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
-				}
+			}
+			finally
+			{
+				ArrayPool<byte>.Shared.Return(buffer);
 			}
 		}
 
@@ -364,9 +425,9 @@ namespace ValvePak
 				return;
 			}
 
-			var allEntries = GetAllEntries()
-				.OrderBy(file => file.ArchiveIndex)
-				.ThenBy(file => file.Offset);
+			var allEntries = new List<PackageEntry>(GetEntryCount());
+			allEntries.AddRange(GetAllEntries());
+			allEntries.Sort(CompareDataPosition);
 
 			VerifyEntryChecksums(allEntries, progressReporter, CancellationToken.None);
 
@@ -376,7 +437,7 @@ namespace ValvePak
 		/// <summary>
 		/// Verifies the CRC32 checksum of each of the entries, reporting a string before each.
 		/// </summary>
-		private void VerifyEntryChecksums(IEnumerable<PackageEntry> entries, IProgress<string>? progressReporter, CancellationToken cancellationToken)
+		private void VerifyEntryChecksums(List<PackageEntry> entries, IProgress<string>? progressReporter, CancellationToken cancellationToken)
 		{
 			var crc = new Crc32();
 			Action<ReadOnlySpan<byte>> appendToCrc = crc.Append;

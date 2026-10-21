@@ -29,11 +29,6 @@ namespace ValvePak
 		public const ushort DirectoryArchiveIndex = 0x7FFF;
 
 		/// <summary>
-		/// Highest archive index of a chunk file.
-		/// </summary>
-		public const ushort MaxChunkIndex = 0x7FFE;
-
-		/// <summary>
 		/// Maximum size in bytes of the file data in a directory file.
 		/// </summary>
 		public const int MaxDirectoryFileDataSize = int.MaxValue;
