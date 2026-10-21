@@ -1230,29 +1230,7 @@ namespace ValvePak
 
 		private static bool PathsEqual(string path1, string path2)
 		{
-			var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
-			return TrimDevicePrefix(path1).Equals(TrimDevicePrefix(path2), comparison);
-		}
-
-		/// <summary>
-		/// Returns a Windows path without its "\\?\" or "\\.\" device path prefix, and a UNC path without its leading "\\" or "\\?\UNC\".
-		/// </summary>
-		private static ReadOnlySpan<char> TrimDevicePrefix(ReadOnlySpan<char> path)
-		{
-			if (!OperatingSystem.IsWindows())
-			{
-				return path;
-			}
-
-			if (path.StartsWith(@"\\?\", StringComparison.Ordinal) || path.StartsWith(@"\\.\", StringComparison.Ordinal))
-			{
-				path = path[4..];
-
-				return path.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase) ? path[4..] : path;
-			}
-
-			return path.StartsWith(@"\\", StringComparison.Ordinal) ? path[2..] : path;
+			return string.Equals(path1, path2, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 		}
 
 		/// <summary>

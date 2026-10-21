@@ -856,14 +856,7 @@ namespace ValvePak.Test
 			package.RemoveFile(package.FindEntry("kitten.jpg")!);
 
 			// test.vpk has the same chunk file names as test_dir.vpk, which would be left referring to replaced chunk files
-			var target = TempPath("test.vpk");
-			string[] targets = OperatingSystem.IsWindows() ? [target, $@"\\?\{target}"] : [target];
-
-			foreach (var path in targets)
-			{
-				await Assert.That(() => package.Write(path, repack: true)).ThrowsExactly<InvalidOperationException>();
-			}
-
+			await Assert.That(() => package.Write(TempPath("test.vpk"), repack: true)).ThrowsExactly<InvalidOperationException>();
 			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
 
 			await AssertFilesUnchanged(originalFiles);
