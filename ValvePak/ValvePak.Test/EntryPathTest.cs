@@ -15,7 +15,10 @@ namespace ValvePak.Test
 		[Arguments("../b.txt", null)]
 		[Arguments("a/b/", null)]
 		[Arguments(".gitignore", null)]
-		[Arguments("x.. ", null)]
+		[Arguments("x.. ", "x.. ")]
+		[Arguments("a/.. ", null)]
+		[Arguments("a/..x", "a/..x")]
+		[Arguments("dir/a.b. ", "dir/a.b. ")]
 		[Arguments("a/b\0c.txt", null)]
 		[Arguments("a/\ud800.txt", null)]
 		public async Task NormalizesEntryPaths(string path, string? expected)

@@ -864,6 +864,19 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		public async Task RepackRefusesToWriteOverAChunkFile()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalFiles = Directory.GetFiles(TempDirectory).ToDictionary(static path => path, File.ReadAllBytes);
+
+			using var package = new Package();
+			package.Read(dirPath);
+
+			await Assert.That(() => package.Write(TempPath("test_000.vpk"), repack: true)).ThrowsExactly<InvalidOperationException>();
+			await AssertFilesUnchanged(originalFiles);
+		}
+
+		[Test]
 		public async Task RequiresRepackForPathsTheChunkFilesAreNotNamedAfter()
 		{
 			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");

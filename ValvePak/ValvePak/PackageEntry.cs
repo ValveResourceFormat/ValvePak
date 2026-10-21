@@ -76,18 +76,12 @@ namespace ValvePak
 
 		/// <summary>
 		/// Returns the file name and extension.
+		/// For a file without an extension whose name has a dot, this ends with ". " so that the path finds the file again.
 		/// </summary>
 		/// <returns>File name and extension.</returns>
 		public string GetFileName()
 		{
-			var fileName = FileName;
-
-			if (TypeName == Package.Space)
-			{
-				return fileName;
-			}
-
-			return string.Concat(fileName, Package.Dot, TypeName);
+			return Package.IsTypeNameInPath(FileName, TypeName) ? string.Concat(FileName, Package.Dot, TypeName) : FileName;
 		}
 
 		/// <summary>

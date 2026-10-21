@@ -411,7 +411,8 @@ namespace ValvePak
 
 		/// <summary>
 		/// Normalizes a file path to the path that <see cref="AddFile(string, byte[], bool)"/> stores it at: '\' is a directory separator,
-		/// empty and "." segments are removed, ".." removes the segment before it, ASCII letters are lowercased, and the type name is split from the file name at its last dot.
+		/// empty and "." segments are removed, ".." removes the segment before it, ASCII letters are lowercased, and the type name is split from the file name at its last dot,
+		/// where a type name of a single space means the file has no extension.
 		/// </summary>
 		/// <param name="filePath">Full file path.</param>
 		/// <param name="normalizedPath">The normalized path, or null if the path is rejected.</param>
@@ -437,20 +438,40 @@ namespace ValvePak
 		/// Normalizes a directory path to the <see cref="PackageEntry.DirectoryName"/> of the files in it, like <see cref="TryParseEntryPath"/> normalizes directories.
 		/// </summary>
 		/// <param name="directoryPath">Directory path, which may end with a directory separator.</param>
-		/// <returns>The normalized path, or an empty string for the root directory or if the path has a ".." above the root.</returns>
+		/// <returns>The normalized path, or an empty string for the root directory or if the path has a ".." above the root, a null character or an unpaired surrogate.</returns>
 		public static string NormalizeDirectoryPath(string directoryPath)
 		{
 			ArgumentNullException.ThrowIfNull(directoryPath);
 
-			var filePath = string.Concat(directoryPath, "/x");
-			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+			GetDirectoryPathError(directoryPath, out var directory);
 
-			if (SplitEntryPath(filePath, buffer, out var directory, out _, out _) != null || directory is Space)
+			return directory;
+		}
+
+		/// <summary>
+		/// Normalizes a directory path like <see cref="TryParseEntryPath"/> normalizes directories, to an empty string for the root or a rejected path.
+		/// </summary>
+		/// <returns>Why the path can not be a directory, or null.</returns>
+		private static string? GetDirectoryPathError(string directoryPath, out string directory)
+		{
+			var length = directoryPath.Length + 2;
+			Span<char> buffer = length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength * 2] : new char[length * 2];
+			var filePath = buffer[..length];
+
+			directoryPath.CopyTo(filePath);
+			filePath[^2] = DirectorySeparatorChar;
+			filePath[^1] = 'x';
+
+			var error = SplitEntryPath(filePath, buffer[length..], out var directorySpan, out _, out _);
+
+			if (error != null || directorySpan is Space)
 			{
-				return string.Empty;
+				directory = string.Empty;
+				return error;
 			}
 
-			return directory.ToString();
+			directory = directorySpan.SequenceEqual(directoryPath) ? directoryPath : directorySpan.ToString();
+			return null;
 		}
 
 		/// <summary>
@@ -520,7 +541,7 @@ namespace ValvePak
 			fileName = dot > -1 ? file[..dot] : file;
 			typeName = dot > -1 ? file[(dot + 1)..] : Space;
 
-			if (dot == 0 || dot == file.Length - 1 || (typeName is Space && fileName.EndsWith('.')))
+			if (dot == 0 || dot == file.Length - 1 || (typeName is Space && fileName is Dot or DotDot))
 			{
 				directory = fileName = typeName = default;
 				return "has a file name that is empty or ends with a dot";
@@ -617,9 +638,17 @@ namespace ValvePak
 			return true;
 		}
 
+		/// <summary>
+		/// Returns whether the path of a file has the type name after a dot, which is left out only for a file without an extension and without a dot in its name.
+		/// </summary>
+		internal static bool IsTypeNameInPath(ReadOnlySpan<char> fileName, ReadOnlySpan<char> typeName)
+		{
+			return typeName is not Space || fileName.Contains('.');
+		}
+
 		private static string JoinEntryPath(ReadOnlySpan<char> directory, ReadOnlySpan<char> fileName, ReadOnlySpan<char> typeName)
 		{
-			var file = typeName is Space ? fileName.ToString() : string.Concat(fileName, Dot, typeName);
+			var file = IsTypeNameInPath(fileName, typeName) ? string.Concat(fileName, Dot, typeName) : fileName.ToString();
 
 			return directory is Space ? file : string.Concat(directory, DirectorySeparator, file);
 		}
