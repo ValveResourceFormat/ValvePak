@@ -856,11 +856,31 @@ namespace ValvePak.Test
 			package.RemoveFile(package.FindEntry("kitten.jpg")!);
 
 			// test.vpk has the same chunk file names as test_dir.vpk, which would be left referring to replaced chunk files
-			await Assert.That(() => package.Write(TempPath("test.vpk"), repack: true)).ThrowsExactly<InvalidOperationException>();
+			var target = TempPath("test.vpk");
+			string[] targets = OperatingSystem.IsWindows() ? [target, $@"\\?\{target}"] : [target];
+
+			foreach (var path in targets)
+			{
+				await Assert.That(() => package.Write(path, repack: true)).ThrowsExactly<InvalidOperationException>();
+			}
+
 			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
 
 			await AssertFilesUnchanged(originalFiles);
 			await AssertPackageVerifies(package);
+		}
+
+		[Test]
+		public async Task RepackRefusesToWriteOverAChunkFile()
+		{
+			var dirPath = CopyFixtures("test_dir.vpk", "test_000.vpk");
+			var originalFiles = Directory.GetFiles(TempDirectory).ToDictionary(static path => path, File.ReadAllBytes);
+
+			using var package = new Package();
+			package.Read(dirPath);
+
+			await Assert.That(() => package.Write(TempPath("test_000.vpk"), repack: true)).ThrowsExactly<InvalidOperationException>();
+			await AssertFilesUnchanged(originalFiles);
 		}
 
 		[Test]

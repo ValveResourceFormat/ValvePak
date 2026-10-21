@@ -594,7 +594,7 @@ namespace ValvePak
 		/// until a number has no file, and in the latter case also up to the highest number the package had.</param>
 		/// <exception cref="InvalidOperationException"><paramref name="repack"/> is false and <see cref="RequiresRepack(string)"/> is true,
 		/// <paramref name="repack"/> is true and the package has chunk files named after <paramref name="filename"/> but was read from another file,
-		/// or <paramref name="filename"/> is the file the package was read from inside a larger file.</exception>
+		/// <paramref name="filename"/> is the file the package was read from inside a larger file, or <paramref name="filename"/> is a chunk file of this package.</exception>
 		public void Write(string filename, bool repack = false)
 		{
 			ArgumentNullException.ThrowIfNull(filename);
@@ -606,6 +606,11 @@ namespace ValvePak
 			if (replacesReadFile && StreamOffset != 0)
 			{
 				throw new InvalidOperationException("This package was read from inside a larger file, which can not be written over.");
+			}
+
+			if (IsChunkFile(fullPath))
+			{
+				throw new InvalidOperationException($"'{fullPath}' is a chunk file of this package, which can not be written over.");
 			}
 
 			var baseName = StripDirVpkSuffixes(fullPath, out var isDirVpk);
@@ -1213,24 +1218,41 @@ namespace ValvePak
 
 		private bool IsReadFile(string path)
 		{
-			if (ReadFilePath != null && PathsEqual(path, ReadFilePath))
-			{
-				return true;
-			}
+			return (ReadFilePath != null && PathsEqual(path, ReadFilePath)) || IsChunkFile(path);
+		}
 
-			if (HighestChunkIndex < 0)
-			{
-				return false;
-			}
-
-			var baseName = GetChunkBaseName();
-
-			return Enumerable.Range(0, HighestChunkIndex + 1).Any(archiveIndex => PathsEqual(path, GetArchiveIndexFullFilePath(baseName, (ushort)archiveIndex)));
+		private bool IsChunkFile(string path)
+		{
+			return TryParseChunkFilePath(path, out var baseName, out var archiveIndex)
+				&& archiveIndex <= HighestChunkIndex
+				&& WritesOverChunkFiles(baseName);
 		}
 
 		private static bool PathsEqual(string path1, string path2)
 		{
-			return string.Equals(path1, path2, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+			var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+			return TrimDevicePrefix(path1).Equals(TrimDevicePrefix(path2), comparison);
+		}
+
+		/// <summary>
+		/// Returns a Windows path without its "\\?\" or "\\.\" device path prefix, and a UNC path without its leading "\\" or "\\?\UNC\".
+		/// </summary>
+		private static ReadOnlySpan<char> TrimDevicePrefix(ReadOnlySpan<char> path)
+		{
+			if (!OperatingSystem.IsWindows())
+			{
+				return path;
+			}
+
+			if (path.StartsWith(@"\\?\", StringComparison.Ordinal) || path.StartsWith(@"\\.\", StringComparison.Ordinal))
+			{
+				path = path[4..];
+
+				return path.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase) ? path[4..] : path;
+			}
+
+			return path.StartsWith(@"\\", StringComparison.Ordinal) ? path[2..] : path;
 		}
 
 		/// <summary>
