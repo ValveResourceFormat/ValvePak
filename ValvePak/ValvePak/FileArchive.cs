@@ -70,6 +70,12 @@ namespace ValvePak
 				return null;
 			}
 
+			// Checked before EnsureInitialized because passing CreateView allocates a delegate on every call
+			if (Volatile.Read(ref IsMapped))
+			{
+				return View;
+			}
+
 			return LazyInitializer.EnsureInitialized(ref View, ref IsMapped, ref MappingLock, CreateView);
 		}
 

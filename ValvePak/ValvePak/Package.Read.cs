@@ -345,6 +345,9 @@ namespace ValvePak
 			var typeEntries = CreateEntriesDictionary();
 			var position = 0;
 
+			// Entries of a type are collected here and then copied into a list of exact size, so lists do not grow for every type
+			var parsedEntries = new List<PackageEntry>();
+
 			// Types
 			while (true)
 			{
@@ -355,7 +358,7 @@ namespace ValvePak
 					break;
 				}
 
-				var entries = new List<PackageEntry>();
+				parsedEntries.Clear();
 
 				// Directories
 				while (true)
@@ -416,9 +419,11 @@ namespace ValvePak
 							position += smallDataSize;
 						}
 
-						entries.Add(entry);
+						parsedEntries.Add(entry);
 					}
 				}
+
+				var entries = new List<PackageEntry>(parsedEntries);
 
 				// Types that differ only in case share a list when the dictionary is case insensitive
 				if (typeEntries.TryGetValue(typeName, out var existingEntries))
