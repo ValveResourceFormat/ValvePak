@@ -4,6 +4,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -115,16 +116,17 @@ namespace ValvePak
 
 		/// <summary>
 		/// Removes every entry in a directory and its subdirectories from current package.
+		/// The directory is normalized like <see cref="NormalizeDirectoryPath(string)"/> does and compared with the directories of the entries like <see cref="FindEntry(string)"/> compares names.
 		/// </summary>
-		/// <param name="directory">The directory as entries store it in <see cref="PackageEntry.DirectoryName"/>, with or without a trailing '/'.</param>
+		/// <param name="directory">The directory, which may end with a directory separator.</param>
 		/// <returns>The removed entries.</returns>
-		/// <exception cref="ArgumentException"><paramref name="directory"/> is the root.</exception>
+		/// <exception cref="ArgumentException"><paramref name="directory"/> is the root or is rejected, see <see cref="NormalizeDirectoryPath(string)"/>.</exception>
 		public IReadOnlyList<PackageEntry> RemoveDirectory(string directory)
 		{
 			ArgumentNullException.ThrowIfNull(directory);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			var removed = GetEntriesInDirectory(TrimStoredDirectory(directory, nameof(directory)));
+			var removed = GetEntriesInDirectory(ParseDirectoryPath(directory, nameof(directory)));
 
 			RemoveEntries(removed);
 
@@ -133,33 +135,36 @@ namespace ValvePak
 
 		/// <summary>
 		/// Moves every entry in a directory and its subdirectories into another directory. Only the directory tree changes, the file data is not touched.
-		/// Be careful to not move entries onto the paths of other entries, because this does not check for duplicates.
+		/// Be careful to not move entries onto the paths of other entries or of each other, because this does not check for duplicates.
 		/// </summary>
-		/// <param name="directory">The directory as entries store it, see <see cref="RemoveDirectory(string)"/>.</param>
-		/// <param name="newDirectory">The directory to move the entries into, normalized like <see cref="NormalizeDirectoryPath(string)"/> does.</param>
+		/// <param name="directory">The directory to move, found like <see cref="RemoveDirectory(string)"/> finds it.</param>
+		/// <param name="newDirectory">The directory to move the entries into. The moved paths are normalized like <see cref="TryParseEntryPath"/> does.</param>
 		/// <returns>The moved entries.</returns>
-		/// <exception cref="ArgumentException"><paramref name="directory"/> or <paramref name="newDirectory"/> is the root.</exception>
+		/// <exception cref="ArgumentException"><paramref name="directory"/> or <paramref name="newDirectory"/> is the root or is rejected, see <see cref="NormalizeDirectoryPath(string)"/>,
+		/// or a moved path is rejected, see <see cref="TryParseEntryPath"/>. No entry is moved then.</exception>
 		public IReadOnlyList<PackageEntry> RenameDirectory(string directory, string newDirectory)
 		{
 			ArgumentNullException.ThrowIfNull(directory);
 			ArgumentNullException.ThrowIfNull(newDirectory);
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-			var storedDirectory = TrimStoredDirectory(directory, nameof(directory));
-			var targetDirectory = NormalizeDirectoryPath(newDirectory);
+			var sourceDirectory = ParseDirectoryPath(directory, nameof(directory));
+			var targetDirectory = ParseDirectoryPath(newDirectory, nameof(newDirectory));
+			var moved = GetEntriesInDirectory(sourceDirectory);
+			var newNames = new (string DirectoryName, string FileName, string TypeName)[moved.Count];
+			var newDirectoryNames = new HashSet<string>().GetAlternateLookup<ReadOnlySpan<char>>();
 
-			if (targetDirectory.Length == 0)
+			for (var i = 0; i < moved.Count; i++)
 			{
-				throw new ArgumentException($"'{newDirectory}' is the root.", nameof(newDirectory));
+				newNames[i] = ParseMovedEntryPath(moved[i], sourceDirectory.Length, targetDirectory, newDirectoryNames, nameof(newDirectory));
 			}
-
-			var moved = GetEntriesInDirectory(storedDirectory);
 
 			RemoveEntries(moved);
 
-			foreach (var entry in moved)
+			for (var i = 0; i < moved.Count; i++)
 			{
-				entry.DirectoryName = string.Concat(targetDirectory, entry.DirectoryName.AsSpan(storedDirectory.Length));
+				var entry = moved[i];
+				(entry.DirectoryName, entry.FileName, entry.TypeName) = newNames[i];
 
 				InsertEntry(entry);
 			}
@@ -167,38 +172,81 @@ namespace ValvePak
 			return moved;
 		}
 
-		private static string TrimStoredDirectory(string directory, string paramName)
+		/// <summary>
+		/// Returns the normalized names of the entry with the first <paramref name="sourceDirectoryLength"/> characters of its directory replaced by <paramref name="targetDirectory"/>,
+		/// reusing the stored names that normalizing leaves unchanged and the directory names already in <paramref name="directoryNames"/>.
+		/// </summary>
+		/// <exception cref="ArgumentException">The moved path is rejected.</exception>
+		private static (string DirectoryName, string FileName, string TypeName) ParseMovedEntryPath(PackageEntry entry, int sourceDirectoryLength, string targetDirectory,
+			HashSet<string>.AlternateLookup<ReadOnlySpan<char>> directoryNames, string paramName)
 		{
-			if (directory.EndsWith(DirectorySeparatorChar))
+			var subdirectory = entry.DirectoryName.AsSpan(sourceDirectoryLength);
+			var length = targetDirectory.Length + subdirectory.Length + entry.FileName.Length + entry.TypeName.Length + 2;
+			Span<char> buffer = length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength * 2] : new char[length * 2];
+			var path = buffer[..length];
+
+			path.TryWrite(CultureInfo.InvariantCulture, $"{targetDirectory}{subdirectory}{DirectorySeparatorChar}{entry.FileName}.{entry.TypeName}", out _);
+
+			if (GetEntryPathError(path, buffer[length..], out var directoryName, out var fileName, out var typeName) is { } error)
 			{
-				directory = directory[..^1];
+				throw new ArgumentException($"'{path}' {error}.", paramName);
 			}
 
-			if (directory is "" or Space)
+			if (!directoryNames.TryGetValue(directoryName, out var newDirectoryName))
 			{
-				throw new ArgumentException("The root directory can not be renamed or removed.", paramName);
+				newDirectoryName = directoryName.ToString();
+				directoryNames.Set.Add(newDirectoryName);
+			}
+
+			return (
+				newDirectoryName,
+				fileName.SequenceEqual(entry.FileName) ? entry.FileName : fileName.ToString(),
+				typeName.SequenceEqual(entry.TypeName) ? entry.TypeName : typeName.ToString());
+		}
+
+		/// <summary>
+		/// Normalizes a directory path like <see cref="NormalizeDirectoryPath(string)"/> does.
+		/// </summary>
+		/// <exception cref="ArgumentException">The directory is the root or is rejected.</exception>
+		private static string ParseDirectoryPath(string directoryPath, string paramName)
+		{
+			if (GetDirectoryPathError(directoryPath, out var directory) is { } error)
+			{
+				throw new ArgumentException($"'{directoryPath}' {error}.", paramName);
+			}
+
+			if (directory.Length == 0)
+			{
+				throw new ArgumentException($"'{directoryPath}' is the root.", paramName);
 			}
 
 			return directory;
 		}
 
 		/// <summary>
-		/// Returns the entries whose stored directory is the given directory or one of its subdirectories, with ASCII letters case insensitive.
+		/// Returns the entries whose directory is the given normalized directory or one of its subdirectories, compared like <see cref="FindEntry(string)"/> compares names.
 		/// </summary>
 		private List<PackageEntry> GetEntriesInDirectory(string directory)
 		{
+			var comparison = Comparer?.Comparison ?? StringComparison.Ordinal;
+
 			return [.. GetAllEntries().Where(entry => entry.DirectoryName.Length >= directory.Length
 				&& (entry.DirectoryName.Length == directory.Length || entry.DirectoryName[directory.Length] == DirectorySeparatorChar)
-				&& AsciiComparer.Equals(entry.DirectoryName.AsSpan(0, directory.Length), directory))];
+				&& entry.DirectoryName.AsSpan(0, directory.Length).Equals(directory, comparison))];
 		}
 
 		private void RemoveEntries(List<PackageEntry> entries)
 		{
+			if (entries.Count == 0)
+			{
+				return;
+			}
+
 			var removed = entries.ToHashSet();
 
-			foreach (var typeName in removed.Select(static entry => entry.TypeName).Distinct())
+			foreach (var typeName in removed.Select(static entry => entry.TypeName).Distinct(Entries!.Comparer))
 			{
-				var typeEntries = Entries![typeName];
+				var typeEntries = Entries[typeName];
 				typeEntries.RemoveAll(removed.Contains);
 
 				if (typeEntries.Count == 0)

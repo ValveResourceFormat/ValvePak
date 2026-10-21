@@ -235,7 +235,7 @@ namespace ValvePak.Test
 				{
 					var expected = path switch
 					{
-						"dir/archive.tar.gz" => entry,
+						"dir/archive.tar.gz" or "has.dot. " => entry,
 						"Upper/File.TXT" when optimize => entry,
 						_ => null,
 					};
@@ -692,11 +692,40 @@ namespace ValvePak.Test
 
 			using (Assert.Multiple())
 			{
-				await Assert.That(package.RenameDirectory("materials/", "Renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
+				await Assert.That(package.RenameDirectory("Materials\\", "Renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
 				await Assert.That(nested.GetFullPath()).IsEqualTo("renamed/sub/b.txt");
 				await Assert.That(sibling.GetFullPath()).IsEqualTo("materialsx/c.txt");
 				await Assert.That(package.RemoveDirectory("renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
 				await Assert.That(package.Entries!["txt"]).IsEquivalentTo([sibling], CollectionOrdering.Matching);
+				await Assert.That(() => package.RemoveDirectory("a/../..")).ThrowsExactly<ArgumentException>().WithMessageContaining("above the root", StringComparison.Ordinal);
+			}
+		}
+
+		[Test]
+		public async Task RenamesAndRemovesReadDirectoriesWithUpperCaseNames()
+		{
+			using var output = new MemoryStream();
+
+			using (var package = new Package())
+			{
+				var entry = package.AddFile("a.txt", [1]);
+				(entry.DirectoryName, entry.FileName, entry.TypeName) = ("Materials/Sub", "Wall", "VMT");
+				package.AddFile("dir/a.txt", [2]).TypeName = "TXT";
+				package.Write(output);
+			}
+
+			output.Position = 0;
+
+			using var readBack = new Package();
+			readBack.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
+			readBack.SetFileName("test.vpk");
+			readBack.Read(output);
+			readBack.AddFile("dir/b.txt", [3]);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(readBack.RenameDirectory("materials", "renamed").Single().GetFullPath()).IsEqualTo("renamed/sub/wall.vmt");
+				await Assert.That(readBack.RemoveDirectory("dir")).Count().IsEqualTo(2);
 			}
 		}
 
