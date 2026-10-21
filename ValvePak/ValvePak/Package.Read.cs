@@ -3,6 +3,8 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
 using System.Linq;
@@ -66,10 +68,62 @@ namespace ValvePak
 				.Where(static archiveIndex => archiveIndex < DirectoryArchiveIndex)
 				.Max(static archiveIndex => (int?)archiveIndex) ?? -1;
 
-			if (HighestChunkIndex >= 0)
+			if (HighestChunkIndex >= 0 && !IsReadFromAnotherPackage)
 			{
 				ChunkBaseName = Path.GetFullPath(FileName);
 			}
+		}
+
+		/// <summary>
+		/// Opens and reads the package at the given path, with its entries sorted for binary search, see <see cref="OptimizeEntriesForBinarySearch"/>.
+		/// </summary>
+		/// <param name="path">Path of the directory file.</param>
+		/// <param name="comparison">Comparison that <see cref="FindEntry(string)"/> compares names with.</param>
+		/// <returns>The read package, which holds the file open until it is disposed.</returns>
+		public static Package Open(string path, StringComparison comparison = StringComparison.Ordinal)
+		{
+			ArgumentNullException.ThrowIfNull(path);
+
+			var package = new Package();
+
+			try
+			{
+				package.OptimizeEntriesForBinarySearch(comparison);
+				package.Read(path);
+			}
+			catch
+			{
+				package.Dispose();
+				throw;
+			}
+
+			return package;
+		}
+
+		/// <summary>
+		/// Returns a read-only seekable stream over the data of the entry including its preload bytes, which reads in place from the archive the entry is in
+		/// unless its data is held in memory. Passing it directly to <see cref="Read(Stream)"/> reads a package stored in the entry in place,
+		/// and that package throws <see cref="NotSupportedException"/> when reading its entries in chunk files.
+		/// Like streams from <see cref="GetMemoryMappedStreamIfPossible"/>, it can only be read while the package is open and has not replaced the file it reads from.
+		/// </summary>
+		/// <param name="entry">Package entry.</param>
+		/// <returns>Stream over the entry contents.</returns>
+		/// <exception cref="FileNotFoundException">The chunk file of the entry does not exist.</exception>
+		public Stream OpenEntryStream(PackageEntry entry)
+		{
+			ArgumentNullException.ThrowIfNull(entry);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			if (entry.PendingData != null || entry.Length == 0)
+			{
+				ReadEntry(entry, out var data, validateCrc: false);
+
+				return new PackageDataStream(data);
+			}
+
+			var archive = GetArchive(entry.ArchiveIndex);
+
+			return new PackageDataStream(archive, archive.DataOffset + entry.Offset, entry.Length, entry.SmallData);
 		}
 
 		/// <summary>
@@ -79,6 +133,7 @@ namespace ValvePak
 		{
 			CloseDirectoryFile();
 			ReadFilePath = path;
+			IsReadFromAnotherPackage = false;
 
 			var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -100,6 +155,7 @@ namespace ValvePak
 		{
 			Reader = new BinaryReader(input);
 			ReadFilePath = (input as FileStream)?.Name;
+			IsReadFromAnotherPackage = input is PackageDataStream;
 
 			if (Reader.ReadUInt32() != MAGIC)
 			{
@@ -139,14 +195,12 @@ namespace ValvePak
 			var embeddedDataOffset = (long)HeaderSize + TreeSize;
 
 			// Taking the handle flushes the stream's buffer, so it is done here before any other thread can read from the stream
-			if (input is FileStream fileStream)
+			Archives[DirectoryArchiveIndex] = input switch
 			{
-				Archives[DirectoryArchiveIndex] = new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset);
-			}
-			else
-			{
-				Archives[DirectoryArchiveIndex] = new StreamArchive(input, StreamOffset, embeddedDataOffset);
-			}
+				FileStream fileStream => new FileArchive(fileStream.SafeFileHandle, ownsHandle: false, StreamOffset, embeddedDataOffset),
+				PackageDataStream dataStream => new PackageDataStreamArchive(dataStream, StreamOffset, embeddedDataOffset),
+				_ => new StreamArchive(input, StreamOffset, embeddedDataOffset),
+			};
 		}
 
 		private void ReadSections()
@@ -573,7 +627,8 @@ namespace ValvePak
 		/// Files smaller or equal to 4096 bytes will be read into memory.
 		///
 		/// When trying to map a file in a non-split packages (<see cref="IsDirVPK"/>),
-		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>.
+		/// this will only memory map if the package was read by providing <see cref="FileStream"/> or using <see cref="Read(string)"/>,
+		/// or was read from <see cref="OpenEntryStream"/> of such a package.
 		///
 		/// Each archive is mapped once.
 		/// Returned streams can only be read while the package is open, they throw <see cref="ObjectDisposedException"/>
@@ -602,6 +657,90 @@ namespace ValvePak
 			ReadEntry(entry, out var output, false);
 
 			return new MemoryStream(output);
+		}
+
+		/// <summary>
+		/// Returns a read-only stream over a whole chunk file, or for <see cref="DirectoryArchiveIndex"/> over the file data in the directory file, at <see cref="PackageEntry.Offset"/> positions.
+		/// Like streams from <see cref="GetMemoryMappedStreamIfPossible"/>, it can only be read while the package is open and has not replaced the file it reads from.
+		/// </summary>
+		/// <param name="archiveIndex">Index of the chunk file, or <see cref="DirectoryArchiveIndex"/>.</param>
+		/// <exception cref="FileNotFoundException">The chunk file does not exist.</exception>
+		public Stream OpenArchiveStream(ushort archiveIndex)
+		{
+			ArgumentOutOfRangeException.ThrowIfGreaterThan(archiveIndex, DirectoryArchiveIndex);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var archive = GetArchive(archiveIndex);
+			var length = Math.Max(0, archive.Length - archive.DataOffset);
+
+			if (archiveIndex == DirectoryArchiveIndex && Version != 1)
+			{
+				length = Math.Min(length, FileDataSectionSize);
+			}
+
+			return archive.OpenMappedStream(archive.DataOffset, length) ?? new PackageDataStream(archive, archive.DataOffset, length);
+		}
+
+		/// <summary>
+		/// Returns the full path of a chunk file of this package, which does not have to exist, such as "pak01_003.vpk" for "pak01_dir.vpk".
+		/// </summary>
+		/// <param name="archiveIndex">Index of the chunk file, up to <see cref="MaxChunkIndex"/>.</param>
+		/// <exception cref="InvalidOperationException">The package has no file name.</exception>
+		public string GetChunkFilePath(ushort archiveIndex)
+		{
+			ArgumentOutOfRangeException.ThrowIfGreaterThan(archiveIndex, MaxChunkIndex);
+
+			return GetArchiveIndexFullFilePath(GetChunkBaseName(), archiveIndex);
+		}
+
+		/// <summary>
+		/// Parses a path in the form that <see cref="GetChunkFilePath(ushort)"/> returns: a base name, an underscore,
+		/// three digits or four to five digits without a leading zero, and ".vpk".
+		/// </summary>
+		/// <param name="path">The path to parse.</param>
+		/// <param name="baseName">The path without the underscore, the index and ".vpk".</param>
+		/// <param name="archiveIndex">The index of the chunk file.</param>
+		/// <returns>True if the path is in the form of a chunk file path.</returns>
+		public static bool TryParseChunkFilePath(string path, [NotNullWhen(true)] out string? baseName, out ushort archiveIndex)
+		{
+			ArgumentNullException.ThrowIfNull(path);
+
+			const string Extension = ".vpk";
+
+			baseName = null;
+			archiveIndex = 0;
+
+			if (!path.EndsWith(Extension, StringComparison.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+
+			var name = path.AsSpan(0, path.Length - Extension.Length);
+			var separator = name.LastIndexOf('_');
+
+			if (separator < 1)
+			{
+				return false;
+			}
+
+			var digits = name[(separator + 1)..];
+
+			if (digits.Length is < 3 or > 5 || digits.ContainsAnyExceptInRange('0', '9') || (digits.Length > 3 && digits[0] == '0'))
+			{
+				return false;
+			}
+
+			var index = int.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+
+			if (index > MaxChunkIndex)
+			{
+				return false;
+			}
+
+			baseName = path[..separator];
+			archiveIndex = (ushort)index;
+
+			return true;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]

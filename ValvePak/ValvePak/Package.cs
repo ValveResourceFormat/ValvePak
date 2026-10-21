@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -19,12 +20,45 @@ namespace ValvePak
 
 		internal const string Space = " ";
 		internal const string Dot = ".";
+		internal const string DotDot = "..";
 		internal const string DirectorySeparator = "/";
 
 		/// <summary>
 		/// Archive index of entries whose data is in the directory file instead of a chunk file.
 		/// </summary>
-		internal const ushort DirectoryArchiveIndex = 0x7FFF;
+		public const ushort DirectoryArchiveIndex = 0x7FFF;
+
+		/// <summary>
+		/// Highest archive index of a chunk file.
+		/// </summary>
+		public const ushort MaxChunkIndex = 0x7FFE;
+
+		/// <summary>
+		/// Maximum size in bytes of the file data in a directory file.
+		/// </summary>
+		public const int MaxDirectoryFileDataSize = int.MaxValue;
+
+		/// <summary>
+		/// Maximum size in bytes of a chunk file.
+		/// </summary>
+		public const uint MaxChunkFileSize = uint.MaxValue;
+
+		/// <summary>
+		/// Maximum number of preload bytes (<see cref="PackageEntry.SmallData"/>) of an entry.
+		/// </summary>
+		public const ushort MaxPreloadSize = ushort.MaxValue;
+
+		/// <summary>
+		/// Maximum length in UTF-8 bytes of a <see cref="PackageEntry.TypeName"/>.
+		/// </summary>
+		public const int MaxTypeNameLength = 128;
+
+		/// <summary>
+		/// Maximum length in UTF-8 bytes of a <see cref="PackageEntry.FileName"/>.
+		/// </summary>
+		public const int MaxFileNameLength = 260;
+
+		private const int MaxStackPathLength = 256;
 
 		/// <summary>
 		/// Always '/' as per Valve's vpk implementation.
@@ -40,6 +74,7 @@ namespace ValvePak
 		private long StreamOffset;
 
 		private string? ReadFilePath;
+		private bool IsReadFromAnotherPackage;
 
 		private readonly ConcurrentDictionary<ushort, Archive> Archives = new();
 		private readonly Lock ArchivesLock = new();
@@ -50,9 +85,20 @@ namespace ValvePak
 		public string? FileName { get; private set; }
 
 		/// <summary>
+		/// Gets the full path of the directory file that this package reads from, or null if it does not read from the start of a file.
+		/// </summary>
+		public string? FilePath => StreamOffset == 0 ? ReadFilePath : null;
+
+		/// <summary>
 		/// Gets whether this package had "_dir" in the name, indicating it has multiple chunk files.
 		/// </summary>
 		public bool IsDirVPK { get; private set; }
+
+		/// <summary>
+		/// Gets whether entries or chunk hashes of this package refer to chunk files, or files were added to chunk files.
+		/// Unlike <see cref="IsDirVPK"/>, this does not depend on the file name.
+		/// </summary>
+		public bool HasChunkFiles => HighestChunkIndex >= 0;
 
 		/// <summary>
 		/// Gets or sets the VPK version. This version is also used when writing the package.
@@ -265,15 +311,13 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Searches for a given file entry in the file list.
+		/// Searches for the entry at the given path, which is normalized like <see cref="TryParseEntryPath"/> does.
 		///
-		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method will use <see cref="List{T}.BinarySearch(T, IComparer{T})"/>.
+		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method uses a binary search.
 		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
 		/// </summary>
 		/// <param name="filePath">Full path to the file to find.</param>
-		/// <remarks>
-		/// The path is normalized the same way as paths of added files, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
-		/// </remarks>
+		/// <returns>The entry, or null if there is none or the path is rejected.</returns>
 		public PackageEntry? FindEntry(string filePath)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -281,58 +325,17 @@ namespace ValvePak
 			return FindEntry(filePath.AsSpan());
 		}
 
-		/// <summary>
-		/// Searches for a given file entry in the file list.
-		///
-		/// If <see cref="OptimizeEntriesForBinarySearch"/> was called on this package, this method will use <see cref="List{T}.BinarySearch(T, IComparer{T})"/>.
-		/// Optimized packages also support case insensitive search by using a different <see cref="StringComparison"/>.
-		/// </summary>
-		/// <param name="filePath">Full path to the file to find.</param>
-		/// <remarks>
-		/// The path is normalized the same way as paths of added files: <see cref="WindowsDirectorySeparator"/> (\) becomes <see cref="DirectorySeparator"/> (/),
-		/// empty and "." segments and trailing dots are removed, and a missing directory or extension is a space.
-		/// If that finds no entry, the path is also looked up as it is, split at its last <see cref="DirectorySeparator"/> and at each dot of the file name,
-		/// which finds entries of read packages whose names normalizing changes.
-		/// The path is not lowercased like added paths are, so the search is case sensitive unless
-		/// <see cref="OptimizeEntriesForBinarySearch"/> was called with a case insensitive <see cref="StringComparison"/>.
-		/// </remarks>
+		/// <inheritdoc cref="FindEntry(string)"/>
 		public PackageEntry? FindEntry(ReadOnlySpan<char> filePath)
 		{
-			SplitPath(NormalizePath(filePath, out var changed), out var directory, out var fileName, out var extension);
+			Span<char> buffer = filePath.Length <= MaxStackPathLength || IsNormalizedPath(filePath) ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
 
-			return FindEntry(directory, fileName, extension) ?? FindEntryByStoredName(filePath, changed ? -1 : fileName.Length);
-		}
-
-		/// <summary>
-		/// Finds the entry whose <see cref="PackageEntry.GetFullPath"/> is the given path, trying each split of the file name into a file and type name.
-		/// </summary>
-		/// <param name="path">The path as it was given.</param>
-		/// <param name="skipSplit">Position in the file name that was already looked up, where the length of the file name means without a type, or -1.</param>
-		private PackageEntry? FindEntryByStoredName(ReadOnlySpan<char> path, int skipSplit)
-		{
-			var lastSeparator = path.LastIndexOf(DirectorySeparatorChar);
-			var directory = lastSeparator > -1 ? path[..lastSeparator] : Space;
-			var name = path[(lastSeparator + 1)..];
-			PackageEntry? entry = null;
-
-			for (var split = 1; entry == null && split <= name.Length; split++)
+			if (SplitEntryPath(filePath, buffer, out var directory, out var fileName, out var typeName) != null)
 			{
-				if (split == skipSplit)
-				{
-					continue;
-				}
-
-				if (split == name.Length)
-				{
-					entry = FindEntry(directory, name, Space);
-				}
-				else if (name[split] == '.' && split < name.Length - 1)
-				{
-					entry = FindEntry(directory, name[..split], name[(split + 1)..]);
-				}
+				return null;
 			}
 
-			return entry;
+			return FindEntry(directory, fileName, typeName);
 		}
 
 		private PackageEntry? FindEntry(ReadOnlySpan<char> directory, ReadOnlySpan<char> fileName, ReadOnlySpan<char> extension)
@@ -407,95 +410,229 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Replaces <see cref="WindowsDirectorySeparator"/> with <see cref="DirectorySeparatorChar"/>, removes empty and "." segments, and removes trailing dots.
+		/// Normalizes a file path to the path that <see cref="AddFile(string, byte[], bool)"/> stores it at: '\' is a directory separator,
+		/// empty and "." segments are removed, ".." removes the segment before it, ASCII letters are lowercased, and the type name is split from the file name at its last dot.
 		/// </summary>
-		private static ReadOnlySpan<char> NormalizePath(ReadOnlySpan<char> path, out bool changed)
+		/// <param name="filePath">Full file path.</param>
+		/// <param name="normalizedPath">The normalized path, or null if the path is rejected.</param>
+		/// <returns>True if a file can be stored at the path, false if it does not end with a file name, has a ".." above the root,
+		/// a null character or an unpaired surrogate, or has a name longer than <see cref="MaxFileNameLength"/> or <see cref="MaxTypeNameLength"/>.</returns>
+		public static bool TryParseEntryPath(string filePath, [NotNullWhen(true)] out string? normalizedPath)
 		{
-			changed = !IsNormalizedPath(path);
+			ArgumentNullException.ThrowIfNull(filePath);
 
-			if (!changed)
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (GetEntryPathError(filePath, buffer, out var directory, out var fileName, out var typeName) != null)
 			{
-				return path;
+				normalizedPath = null;
+				return false;
 			}
 
-			var builder = new StringBuilder(path.Length);
+			normalizedPath = JoinEntryPath(directory, fileName, typeName);
+			return true;
+		}
+
+		/// <summary>
+		/// Normalizes a directory path to the <see cref="PackageEntry.DirectoryName"/> of the files in it, like <see cref="TryParseEntryPath"/> normalizes directories.
+		/// </summary>
+		/// <param name="directoryPath">Directory path, which may end with a directory separator.</param>
+		/// <returns>The normalized path, or an empty string for the root directory or if the path has a ".." above the root.</returns>
+		public static string NormalizeDirectoryPath(string directoryPath)
+		{
+			ArgumentNullException.ThrowIfNull(directoryPath);
+
+			var filePath = string.Concat(directoryPath, "/x");
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (SplitEntryPath(filePath, buffer, out var directory, out _, out _) != null || directory is Space)
+			{
+				return string.Empty;
+			}
+
+			return directory.ToString();
+		}
+
+		/// <summary>
+		/// Splits a file path like <see cref="SplitEntryPath"/> does and checks the lengths of the names.
+		/// </summary>
+		/// <returns>Why the path can not be stored, or null.</returns>
+		private static string? GetEntryPathError(ReadOnlySpan<char> path, Span<char> buffer, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
+		{
+			var error = SplitEntryPath(path, buffer, out directory, out fileName, out typeName);
+
+			if (error != null)
+			{
+				return error;
+			}
+
+			if (Encoding.UTF8.GetByteCount(typeName) > MaxTypeNameLength)
+			{
+				return "has a type name longer than 128 bytes in UTF-8";
+			}
+
+			if (Encoding.UTF8.GetByteCount(fileName) > MaxFileNameLength)
+			{
+				return "has a file name longer than 260 bytes in UTF-8";
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Normalizes a file path like <see cref="TryParseEntryPath"/> does and splits it into the directory, file and type names it is stored as.
+		/// A path that normalizing changes is written into the buffer, which must be at least as long as the path.
+		/// </summary>
+		/// <returns>Why no file can be at the path, or null.</returns>
+		private static string? SplitEntryPath(ReadOnlySpan<char> path, Span<char> buffer, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> typeName)
+		{
+			directory = fileName = typeName = default;
+
+			if (path.IsEmpty || IsDirectorySeparator(path[^1]) || path[(path.LastIndexOfAny(DirectorySeparatorChar, WindowsDirectorySeparator) + 1)..] is Dot or DotDot)
+			{
+				return "does not end with a file name";
+			}
+
+			if (HasInvalidCharacter(path))
+			{
+				return "has a null character or an unpaired surrogate";
+			}
+
+			var normalizedPath = path;
+
+			if (!IsNormalizedPath(path))
+			{
+				var length = ResolveSegments(path, buffer);
+
+				if (length < 0)
+				{
+					return "has a \"..\" segment above the root";
+				}
+
+				normalizedPath = buffer[..length];
+			}
+
+			var lastSeparator = normalizedPath.LastIndexOf(DirectorySeparatorChar);
+			var file = normalizedPath[(lastSeparator + 1)..];
+			var dot = file.LastIndexOf('.');
+
+			directory = lastSeparator > -1 ? normalizedPath[..lastSeparator] : Space;
+			fileName = dot > -1 ? file[..dot] : file;
+			typeName = dot > -1 ? file[(dot + 1)..] : Space;
+
+			if (dot == 0 || dot == file.Length - 1 || (typeName is Space && fileName.EndsWith('.')))
+			{
+				directory = fileName = typeName = default;
+				return "has a file name that is empty or ends with a dot";
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Returns whether the path has a null character, which ends a name in the directory tree, or a surrogate that is not part of a pair, which UTF-8 can not encode.
+		/// </summary>
+		private static bool HasInvalidCharacter(ReadOnlySpan<char> path)
+		{
+			if (path.Contains('\0'))
+			{
+				return true;
+			}
+
+			int i;
+
+			while ((i = path.IndexOfAnyInRange('\uD800', '\uDFFF')) >= 0)
+			{
+				if (!char.IsHighSurrogate(path[i]) || i + 1 >= path.Length || !char.IsLowSurrogate(path[i + 1]))
+				{
+					return true;
+				}
+
+				path = path[(i + 2)..];
+			}
+
+			return false;
+		}
+
+		/// <summary>
+		/// Joins the segments of the path with '/' into the buffer and lowercases ASCII letters, leaving out empty and "." segments and removing the segment before each "..".
+		/// </summary>
+		/// <returns>The length of the resolved path, or -1 if a ".." has no segment before it.</returns>
+		private static int ResolveSegments(ReadOnlySpan<char> path, Span<char> buffer)
+		{
+			var length = 0;
 
 			foreach (var range in path.SplitAny(DirectorySeparatorChar, WindowsDirectorySeparator))
 			{
 				var segment = path[range];
 
-				if (IsSkippedSegment(segment))
+				if (segment.IsEmpty || segment is Dot)
 				{
 					continue;
 				}
 
-				if (builder.Length > 0)
+				if (segment is DotDot)
 				{
-					builder.Append(DirectorySeparatorChar);
+					if (length == 0)
+					{
+						return -1;
+					}
+
+					length = Math.Max(buffer[..length].LastIndexOf(DirectorySeparatorChar), 0);
+					continue;
 				}
 
-				builder.Append(segment);
+				if (length > 0)
+				{
+					buffer[length++] = DirectorySeparatorChar;
+				}
+
+				foreach (var c in segment)
+				{
+					buffer[length++] = ToLowerAscii(c);
+				}
 			}
 
-			var length = builder.Length;
-
-			while (length > 0 && builder[length - 1] == '.')
-			{
-				length--;
-			}
-
-			return builder.ToString(0, length);
+			return length;
 		}
 
+		/// <summary>
+		/// Returns whether normalizing leaves the path as it is, because it has no '\', no upper case ASCII letters and no empty, "." or ".." segments.
+		/// </summary>
 		private static bool IsNormalizedPath(ReadOnlySpan<char> path)
 		{
-			if (path.Contains(WindowsDirectorySeparator))
+			if (path.Contains(WindowsDirectorySeparator) || path.ContainsAnyInRange('A', 'Z'))
 			{
 				return false;
 			}
 
 			foreach (var range in path.Split(DirectorySeparatorChar))
 			{
-				if (IsSkippedSegment(path[range]))
+				if (path[range] is "" or Dot or DotDot)
 				{
 					return false;
 				}
 			}
 
-			return !path.EndsWith('.');
+			return true;
 		}
 
-		private static bool IsSkippedSegment(ReadOnlySpan<char> segment)
+		private static string JoinEntryPath(ReadOnlySpan<char> directory, ReadOnlySpan<char> fileName, ReadOnlySpan<char> typeName)
 		{
-			return segment.IsEmpty || segment is Dot;
+			var file = typeName is Space ? fileName.ToString() : string.Concat(fileName, Dot, typeName);
+
+			return directory is Space ? file : string.Concat(directory, DirectorySeparator, file);
 		}
 
-		/// <summary>
-		/// Splits a normalized path into the directory, file and type names of an entry, using a space for a missing directory or extension.
-		/// </summary>
-		private static void SplitPath(ReadOnlySpan<char> path, out ReadOnlySpan<char> directory, out ReadOnlySpan<char> fileName, out ReadOnlySpan<char> extension)
+		private static bool IsDirectorySeparator(char c)
 		{
-			var lastSeparator = path.LastIndexOf(DirectorySeparatorChar);
-			directory = lastSeparator > -1 ? path[..lastSeparator] : Space;
-			fileName = path[(lastSeparator + 1)..];
-
-			var dot = fileName.LastIndexOf('.');
-			extension = Space;
-
-			if (dot > -1)
-			{
-				extension = fileName[(dot + 1)..];
-				fileName = fileName[..dot];
-			}
+			return c is DirectorySeparatorChar or WindowsDirectorySeparator;
 		}
 
 		/// <summary>
 		/// This sorts <see cref="Entries"/> so that it can be searched through using binary search.
 		/// Use <see cref="StringComparison.OrdinalIgnoreCase"/> if you want <see cref="FindEntry(string)"/> to search case insensitively.
 		/// </summary>
-		/// <remarks>
-		/// This is experimental and may be removed in a future release.
-		/// </remarks>
 		/// <param name="comparison">Comparison method to use.</param>
 		public void OptimizeEntriesForBinarySearch(StringComparison comparison = StringComparison.Ordinal)
 		{
@@ -505,6 +642,63 @@ namespace ValvePak
 			}
 
 			Comparer = new CaseInsensitivePackageEntryComparer(comparison);
+		}
+
+		private static readonly AsciiCaseInsensitiveComparer AsciiComparer = new();
+
+		/// <summary>
+		/// Gets the comparer that compares paths and names ordinally with only ASCII letters case insensitive, which also looks up <see cref="ReadOnlySpan{T}"/> keys in dictionaries.
+		/// </summary>
+		public static StringComparer PathComparer => AsciiComparer;
+
+		private sealed class AsciiCaseInsensitiveComparer : StringComparer, IAlternateEqualityComparer<ReadOnlySpan<char>, string>
+		{
+			public override int Compare(string? x, string? y)
+			{
+				return x == null || y == null ? string.CompareOrdinal(x, y) : CompareAscii(x, y);
+			}
+
+			public override bool Equals(string? x, string? y)
+			{
+				return x == null || y == null ? x == y : Equals(x.AsSpan(), y);
+			}
+
+			public bool Equals(ReadOnlySpan<char> alternate, string other)
+			{
+				return alternate.Length == other.Length && CompareAscii(alternate, other) == 0;
+			}
+
+			public override int GetHashCode(string obj)
+			{
+				return GetHashCode(obj.AsSpan());
+			}
+
+			public int GetHashCode(ReadOnlySpan<char> alternate)
+			{
+				return string.GetHashCode(alternate, StringComparison.OrdinalIgnoreCase);
+			}
+
+			public string Create(ReadOnlySpan<char> alternate)
+			{
+				return alternate.ToString();
+			}
+
+			private static int CompareAscii(ReadOnlySpan<char> x, ReadOnlySpan<char> y)
+			{
+				var length = Math.Min(x.Length, y.Length);
+
+				for (var i = 0; i < length; i++)
+				{
+					var comparison = ToLowerAscii(x[i]).CompareTo(ToLowerAscii(y[i]));
+
+					if (comparison != 0)
+					{
+						return comparison;
+					}
+				}
+
+				return x.Length.CompareTo(y.Length);
+			}
 		}
 	}
 }

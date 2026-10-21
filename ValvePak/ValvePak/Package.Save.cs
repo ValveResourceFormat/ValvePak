@@ -90,11 +90,11 @@ namespace ValvePak
 		/// <summary>
 		/// Moves an entry in current package to a new path. Only the directory tree changes, the file data is not touched.
 		/// Be careful to not move it onto the path of another entry, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="entry">The package entry to rename.</param>
 		/// <param name="newFilePath">Full new file path for this entry.</param>
-		/// <exception cref="ArgumentException">The entry is not in this package, or the new path has an empty file name or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The entry is not in this package, or the new path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public void RenameFile(PackageEntry entry, string newFilePath)
 		{
 			ArgumentNullException.ThrowIfNull(entry);
@@ -114,8 +114,103 @@ namespace ValvePak
 		}
 
 		/// <summary>
+		/// Removes every entry in a directory and its subdirectories from current package.
+		/// </summary>
+		/// <param name="directory">The directory as entries store it in <see cref="PackageEntry.DirectoryName"/>, with or without a trailing '/'.</param>
+		/// <returns>The removed entries.</returns>
+		/// <exception cref="ArgumentException"><paramref name="directory"/> is the root.</exception>
+		public IReadOnlyList<PackageEntry> RemoveDirectory(string directory)
+		{
+			ArgumentNullException.ThrowIfNull(directory);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var removed = GetEntriesInDirectory(TrimStoredDirectory(directory, nameof(directory)));
+
+			RemoveEntries(removed);
+
+			return removed;
+		}
+
+		/// <summary>
+		/// Moves every entry in a directory and its subdirectories into another directory. Only the directory tree changes, the file data is not touched.
+		/// Be careful to not move entries onto the paths of other entries, because this does not check for duplicates.
+		/// </summary>
+		/// <param name="directory">The directory as entries store it, see <see cref="RemoveDirectory(string)"/>.</param>
+		/// <param name="newDirectory">The directory to move the entries into, normalized like <see cref="NormalizeDirectoryPath(string)"/> does.</param>
+		/// <returns>The moved entries.</returns>
+		/// <exception cref="ArgumentException"><paramref name="directory"/> or <paramref name="newDirectory"/> is the root.</exception>
+		public IReadOnlyList<PackageEntry> RenameDirectory(string directory, string newDirectory)
+		{
+			ArgumentNullException.ThrowIfNull(directory);
+			ArgumentNullException.ThrowIfNull(newDirectory);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			var storedDirectory = TrimStoredDirectory(directory, nameof(directory));
+			var targetDirectory = NormalizeDirectoryPath(newDirectory);
+
+			if (targetDirectory.Length == 0)
+			{
+				throw new ArgumentException($"'{newDirectory}' is the root.", nameof(newDirectory));
+			}
+
+			var moved = GetEntriesInDirectory(storedDirectory);
+
+			RemoveEntries(moved);
+
+			foreach (var entry in moved)
+			{
+				entry.DirectoryName = string.Concat(targetDirectory, entry.DirectoryName.AsSpan(storedDirectory.Length));
+
+				InsertEntry(entry);
+			}
+
+			return moved;
+		}
+
+		private static string TrimStoredDirectory(string directory, string paramName)
+		{
+			if (directory.EndsWith(DirectorySeparatorChar))
+			{
+				directory = directory[..^1];
+			}
+
+			if (directory is "" or Space)
+			{
+				throw new ArgumentException("The root directory can not be renamed or removed.", paramName);
+			}
+
+			return directory;
+		}
+
+		/// <summary>
+		/// Returns the entries whose stored directory is the given directory or one of its subdirectories, with ASCII letters case insensitive.
+		/// </summary>
+		private List<PackageEntry> GetEntriesInDirectory(string directory)
+		{
+			return [.. GetAllEntries().Where(entry => entry.DirectoryName.Length >= directory.Length
+				&& (entry.DirectoryName.Length == directory.Length || entry.DirectoryName[directory.Length] == DirectorySeparatorChar)
+				&& AsciiComparer.Equals(entry.DirectoryName.AsSpan(0, directory.Length), directory))];
+		}
+
+		private void RemoveEntries(List<PackageEntry> entries)
+		{
+			var removed = entries.ToHashSet();
+
+			foreach (var typeName in removed.Select(static entry => entry.TypeName).Distinct())
+			{
+				var typeEntries = Entries![typeName];
+				typeEntries.RemoveAll(removed.Contains);
+
+				if (typeEntries.Count == 0)
+				{
+					Entries.Remove(typeName);
+				}
+			}
+		}
+
+		/// <summary>
 		/// Add file to current package. Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">File data for this entry.</param>
@@ -125,7 +220,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public PackageEntry AddFile(string filePath, byte[] fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -150,7 +245,7 @@ namespace ValvePak
 		/// <summary>
 		/// Add file to current package, reading its data from the current position of the stream to its end.
 		/// Be careful to not add duplicate entries, because this does not check for duplicates.
-		/// The path is normalized and lowercased like Valve's packer does, see <see cref="FindEntry(ReadOnlySpan{char})"/>.
+		/// The path is normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		/// <param name="filePath">Full file path for this entry.</param>
 		/// <param name="fileData">Stream to read the file data from. It is not disposed.</param>
@@ -160,7 +255,7 @@ namespace ValvePak
 		/// A new chunk file is started whenever the current one is larger than <see cref="WriteChunkSize"/>.
 		/// Chunk files stay on disk even if the directory file is never written.</param>
 		/// <returns>The added entry.</returns>
-		/// <exception cref="ArgumentException">The path has an empty file name, or contains a null character.</exception>
+		/// <exception cref="ArgumentException">The path is rejected, see <see cref="TryParseEntryPath"/>.</exception>
 		public PackageEntry AddFile(string filePath, Stream fileData, bool multiChunk = false)
 		{
 			ArgumentNullException.ThrowIfNull(filePath);
@@ -176,9 +271,9 @@ namespace ValvePak
 
 			var knownLength = fileData.CanSeek ? fileData.Length - fileData.Position : 0;
 
-			if (knownLength > uint.MaxValue)
+			if (knownLength > MaxChunkFileSize)
 			{
-				throw new ArgumentException($"The stream has {knownLength} bytes left, a chunk file can hold at most {uint.MaxValue}.", nameof(fileData));
+				throw new ArgumentException($"The stream has {knownLength} bytes left, a chunk file can hold at most {MaxChunkFileSize}.", nameof(fileData));
 			}
 
 			var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
@@ -306,12 +401,12 @@ namespace ValvePak
 		/// <param name="length">Size in bytes of the next file, or 0 if it is not known.</param>
 		private bool HasRoomForNextFile([NotNullWhen(true)] ChunkFileWriter? chunkFile, long length)
 		{
-			return chunkFile != null && chunkFile.Length <= (uint)WriteChunkSize && chunkFile.Length + length <= uint.MaxValue;
+			return chunkFile != null && chunkFile.Length <= (uint)WriteChunkSize && chunkFile.Length + length <= MaxChunkFileSize;
 		}
 
 		private static void ThrowIfChunkLimitReached(int archiveIndex)
 		{
-			if (archiveIndex >= DirectoryArchiveIndex)
+			if (archiveIndex > MaxChunkIndex)
 			{
 				throw new InvalidOperationException("Reached the maximum amount of chunk files (32767).");
 			}
@@ -331,6 +426,11 @@ namespace ValvePak
 
 		private string GetChunkBaseName()
 		{
+			if (IsReadFromAnotherPackage)
+			{
+				throw new NotSupportedException("Chunk files of a package read from an entry of another package are not supported.");
+			}
+
 			if (FileName == null)
 			{
 				throw new InvalidOperationException("Call SetFileName() with the path of the directory file before adding files with multi chunk enabled, chunk files are created next to it.");
@@ -355,39 +455,18 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Splits the given path into lowercased directory, file and type names.
+		/// Splits a file path into the directory, file and type names that <see cref="AddFile(string, byte[], bool)"/> stores it with, normalized like <see cref="TryParseEntryPath"/> does.
 		/// </summary>
 		private static (string DirectoryName, string FileName, string TypeName) ParseEntryPath(string filePath, string paramName)
 		{
-			if (filePath.Contains('\0', StringComparison.Ordinal))
+			Span<char> buffer = filePath.Length <= MaxStackPathLength ? stackalloc char[MaxStackPathLength] : new char[filePath.Length];
+
+			if (GetEntryPathError(filePath, buffer, out var directory, out var fileName, out var typeName) is { } error)
 			{
-				throw new ArgumentException($"'{filePath}' contains a null character.", paramName);
+				throw new ArgumentException($"'{filePath}' {error}.", paramName);
 			}
 
-			SplitPath(NormalizePath(filePath, out _), out var directory, out var fileName, out var extension);
-
-			if (fileName.IsEmpty)
-			{
-				throw new ArgumentException($"'{filePath}' has an empty file name.", paramName);
-			}
-
-			return (ToLowerAscii(directory), ToLowerAscii(fileName), ToLowerAscii(extension));
-		}
-
-		private static string ToLowerAscii(ReadOnlySpan<char> value)
-		{
-			if (!value.ContainsAnyInRange('A', 'Z'))
-			{
-				return value.ToString();
-			}
-
-			return string.Create(value.Length, value, static (span, source) =>
-			{
-				for (var i = 0; i < source.Length; i++)
-				{
-					span[i] = ToLowerAscii(source[i]);
-				}
-			});
+			return (directory.ToString(), fileName.ToString(), typeName.ToString());
 		}
 
 		private static char ToLowerAscii(char c)
@@ -448,7 +527,8 @@ namespace ValvePak
 		/// If the package has chunk files, from being read or from files added with multi chunk enabled (see <see cref="AddFile(string, byte[], bool)"/>),
 		/// this only writes the directory file, which refers to the data where it is in the chunk files.
 		/// Unless <paramref name="repack"/> is enabled, it must be written to the path the chunk files are named after, which should end with "_dir.vpk".
-		/// Hashes of chunk files are kept if they cover the whole file, computed again otherwise, and left out for chunk files that had none.
+		/// A package that was not read also deletes existing chunk files numbered after the ones it wrote, until a number has no file.
+		/// Hashes of chunk files are kept if they cover the whole file, and computed otherwise.
 		///
 		/// Writing over the file the package was read from, or repacking, writes temporary files that replace the existing files once all were written,
 		/// and the package reads from the written files afterwards. This must not run concurrently with reads from this package,
@@ -459,10 +539,14 @@ namespace ValvePak
 		/// </summary>
 		/// <param name="filename">The file to open and write.</param>
 		/// <param name="repack">If true, the data in chunk files is copied into new chunk files named after <paramref name="filename"/> in directory tree order,
+		/// or for a package without chunk files written to a "_dir.vpk", the data in the directory file,
 		/// which drops the data of removed and replaced files. Either all existing files are replaced or none are.
 		/// If the package has chunk files with that name and was read from a file, it must be written to that file.
 		/// If new chunk files were written or the package had chunk files with that name, existing chunk files numbered after the new ones are then deleted where possible
 		/// until a number has no file, and in the latter case also up to the highest number the package had.</param>
+		/// <exception cref="InvalidOperationException"><paramref name="repack"/> is false and <see cref="RequiresRepack(string)"/> is true,
+		/// <paramref name="repack"/> is true and the package has chunk files named after <paramref name="filename"/> but was read from another file,
+		/// or <paramref name="filename"/> is the file the package was read from inside a larger file.</exception>
 		public void Write(string filename, bool repack = false)
 		{
 			ArgumentNullException.ThrowIfNull(filename);
@@ -477,7 +561,7 @@ namespace ValvePak
 			}
 
 			var baseName = StripDirVpkSuffixes(fullPath, out var isDirVpk);
-			var writesOverChunkFiles = HighestChunkIndex >= 0 && PathsEqual(baseName, GetChunkBaseName());
+			var writesOverChunkFiles = WritesOverChunkFiles(baseName);
 
 			// Readers find chunk files by appending "_###.vpk" to the directory file name without the "_dir.vpk" suffix
 			if (!repack && HighestChunkIndex >= 0 && !writesOverChunkFiles)
@@ -512,6 +596,11 @@ namespace ValvePak
 
 				output.SetLength(output.Position);
 
+				if (!IsReadPackage && writesOverChunkFiles)
+				{
+					DeleteStaleChunkFiles(baseName, HighestChunkIndex + 1, staleHighestIndex: -1);
+				}
+
 				return;
 			}
 
@@ -526,7 +615,7 @@ namespace ValvePak
 
 				if (repack)
 				{
-					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, token, chunkReplacements);
+					(chunkLocations, chunkHashFractions) = WriteRepackedChunkFiles(entries, baseName, isDirVpk && HighestChunkIndex < 0, token, chunkReplacements);
 				}
 				else
 				{
@@ -581,6 +670,26 @@ namespace ValvePak
 			}
 		}
 
+		/// <summary>
+		/// Returns whether <see cref="Write(string, bool)"/> has to repack to write the directory file to the given path, because the package has chunk files named after another path.
+		/// </summary>
+		/// <param name="filename">The file the directory file is going to be written to.</param>
+		public bool RequiresRepack(string filename)
+		{
+			ArgumentNullException.ThrowIfNull(filename);
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			return HighestChunkIndex >= 0 && !WritesOverChunkFiles(StripDirVpkSuffixes(Path.GetFullPath(filename), out _));
+		}
+
+		/// <summary>
+		/// Returns whether the package has chunk files and they are named after the given base name.
+		/// </summary>
+		private bool WritesOverChunkFiles(string baseName)
+		{
+			return HighestChunkIndex >= 0 && PathsEqual(baseName, GetChunkBaseName());
+		}
+
 		private static string GetTemporaryPath(string path, string token)
 		{
 			return $"{path}.{token}.tmp";
@@ -595,6 +704,7 @@ namespace ValvePak
 			{
 				entry.ArchiveIndex = archiveIndex;
 				entry.Offset = offset;
+				entry.PendingData = null;
 			}
 
 			FileName = baseName;
@@ -660,11 +770,11 @@ namespace ValvePak
 		}
 
 		/// <summary>
-		/// Copies the data of all entries in chunk files into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>.
+		/// Copies the data of all entries in chunk files, and optionally in the directory file, into new chunk files under temporary names, adding each of them to <paramref name="replacements"/>.
 		/// </summary>
 		/// <returns>Where the data of each copied entry was written to, and the hashes of the new chunk files or null if there are none.</returns>
 		private (Dictionary<PackageEntry, ChunkLocation> Locations, List<ChunkHashFraction>? HashFractions) WriteRepackedChunkFiles(
-			List<PackageEntry> entries, string baseName, string token, List<FileReplacement> replacements)
+			List<PackageEntry> entries, string baseName, bool includesDirectoryFileData, string token, List<FileReplacement> replacements)
 		{
 			var locations = new Dictionary<PackageEntry, ChunkLocation>();
 			var hashFractions = new List<ChunkHashFraction>();
@@ -674,7 +784,7 @@ namespace ValvePak
 			{
 				foreach (var entry in entries)
 				{
-					if (!IsInChunkFile(entry))
+					if (!IsInChunkFile(entry) && !(includesDirectoryFileData && IsInDirectoryFile(entry)))
 					{
 						continue;
 					}
@@ -699,7 +809,15 @@ namespace ValvePak
 					}
 
 					locations[entry] = new ChunkLocation(chunkFile.ArchiveIndex, chunkFile.Length);
-					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, chunkFile.Write);
+
+					if (entry.PendingData != null)
+					{
+						chunkFile.Write(entry.PendingData);
+					}
+					else
+					{
+						ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, chunkFile.Write);
+					}
 				}
 
 				if (chunkFile == null)
@@ -895,21 +1013,9 @@ namespace ValvePak
 		/// </summary>
 		private static int CompareNames(string x, string y)
 		{
-			var length = Math.Min(x.Length, y.Length);
+			var comparison = AsciiComparer.Compare(x, y);
 
-			for (var i = 0; i < length; i++)
-			{
-				var comparison = ToLowerAscii(x[i]).CompareTo(ToLowerAscii(y[i]));
-
-				if (comparison != 0)
-				{
-					return comparison;
-				}
-			}
-
-			var lengthComparison = x.Length.CompareTo(y.Length);
-
-			return lengthComparison != 0 ? lengthComparison : string.CompareOrdinal(x, y);
+			return comparison != 0 ? comparison : string.CompareOrdinal(x, y);
 		}
 
 		private static string GetTreeDirectoryName(PackageEntry entry)
@@ -954,7 +1060,7 @@ namespace ValvePak
 						if (entry.Length == 0)
 						{
 							archiveIndex = DirectoryArchiveIndex;
-							fileOffset = uint.MaxValue;
+							fileOffset = embeddedDataOffset;
 						}
 						else if (chunkLocations != null && chunkLocations.TryGetValue(entry, out var location))
 						{
@@ -962,7 +1068,7 @@ namespace ValvePak
 						}
 						else if (archiveIndex == DirectoryArchiveIndex)
 						{
-							if ((ulong)embeddedDataOffset + entry.Length > int.MaxValue)
+							if ((ulong)embeddedDataOffset + entry.Length > MaxDirectoryFileDataSize)
 							{
 								throw new InvalidOperationException("Package contents exceed 2GiB, add files with multi chunk enabled to split them into chunk files.");
 							}
@@ -972,9 +1078,9 @@ namespace ValvePak
 							embeddedEntries.Add(entry);
 						}
 
-						if (entry.SmallData.Length > ushort.MaxValue)
+						if (entry.SmallData.Length > MaxPreloadSize)
 						{
-							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {entry.SmallData.Length} preload bytes, the directory tree can store at most {ushort.MaxValue}.");
+							throw new InvalidOperationException($"Entry '{entry.GetFullPath()}' has {entry.SmallData.Length} preload bytes, the directory tree can store at most {MaxPreloadSize}.");
 						}
 
 						WriteNullTerminated(entry.FileName);
@@ -1121,12 +1227,12 @@ namespace ValvePak
 
 				if (!UpdatedChunkHashFractions.TryGetValue(archiveIndex, out var fractions) && !readFractions.TryGetValue(archiveIndex, out fractions))
 				{
-					continue;
+					fractions = [];
 				}
 
 				if (!CoversFile(fractions, file.Length))
 				{
-					if (file.Length > uint.MaxValue)
+					if (file.Length > MaxChunkFileSize)
 					{
 						throw new InvalidOperationException($"Chunk file {archiveIndex} is {file.Length} bytes, its hashes can only be computed for chunk files smaller than 4 GiB.");
 					}
@@ -1303,7 +1409,7 @@ namespace ValvePak
 			public void Append(ReadOnlySpan<byte> data)
 			{
 				// Offsets and lengths in the directory tree are 32-bit
-				if ((long)Length + data.Length > uint.MaxValue)
+				if ((long)Length + data.Length > MaxChunkFileSize)
 				{
 					throw new InvalidOperationException($"Chunk file {ArchiveIndex} would exceed 4 GiB.");
 				}

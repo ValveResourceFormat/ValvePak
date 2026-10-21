@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -213,12 +214,20 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.CRC32).IsEqualTo(0x09321FC0u);
 				await Assert.That(package.FindEntry("folder with space/file name with space.txt")?.CRC32).IsEqualTo(0x76D91432u);
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.CRC32).IsEqualTo(0x15C1490Fu);
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.CRC32).IsEqualTo(0x32CFF012u);
-				await Assert.That(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt")).IsNull();
+				await Assert.That(package.FindEntry("UpperCaseFolder/bad_file_forfun.txt")?.CRC32).IsEqualTo(0x15C1490Fu);
+				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT")?.CRC32).IsEqualTo(0x15C1490Fu);
+				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")).IsNull();
 				await Assert.That(package.FindEntry("uppercasefolder/UpperCaseFile.txt")).IsNull();
-				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.TXT")).IsNull();
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt2")).IsNull();
 			}
+		}
+
+		/// <summary>
+		/// Returns the entry of broken_dir.vpk whose stored names have upper case letters, which <see cref="Package.FindEntry(string)"/> does not find.
+		/// </summary>
+		private static PackageEntry? GetUpperCaseEntry(Package package)
+		{
+			return package.Entries!["txt"].Find(static entry => entry.FileName == "UpperCaseFile");
 		}
 
 		[Test]
@@ -229,7 +238,7 @@ namespace ValvePak.Test
 			using var package = new Package();
 			package.Read(path);
 
-			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			var file = GetUpperCaseEntry(package);
 			await Assert.That(file).IsNotNull();
 			await Assert.That(file.CRC32).IsEqualTo(0x32CFF012u);
 
@@ -264,7 +273,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space/test")?.GetFullPath()).IsEqualTo("folder with space/test");
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.GetFullPath()).IsEqualTo("folder with space/space_extension. txt");
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.GetFullPath()).IsEqualTo("uppercasefolder/bad_file_forfun.txt");
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.GetFullPath()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt");
+				await Assert.That(GetUpperCaseEntry(package)?.GetFullPath()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt");
 
 				await Assert.That(package.FindEntry("test")?.GetFileName()).IsEqualTo("test");
 				await Assert.That(package.FindEntry("folder with space/test")?.GetFileName()).IsEqualTo("test");
@@ -287,7 +296,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("folder with space/test")?.ToString()).IsEqualTo("folder with space/test crc=0xbf108706 metadatasz=0 fnumber=0 ofs=0x52 sz=41");
 				await Assert.That(package.FindEntry("folder with space\\space_extension. txt")?.ToString()).IsEqualTo("folder with space/space_extension. txt crc=0x9321fc0 metadatasz=0 fnumber=0 ofs=0x7b sz=30");
 				await Assert.That(package.FindEntry("uppercasefolder/bad_file_forfun.txt")?.ToString()).IsEqualTo("uppercasefolder/bad_file_forfun.txt crc=0x15c1490f metadatasz=0 fnumber=0 ofs=0xa2 sz=2");
-				await Assert.That(package.FindEntry("UpperCaseFolder/UpperCaseFile.txt")?.ToString()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43");
+				await Assert.That(GetUpperCaseEntry(package)?.ToString()).IsEqualTo("UpperCaseFolder/UpperCaseFile.txt crc=0x32cff012 metadatasz=0 fnumber=0 ofs=0x27 sz=43");
 			}
 		}
 
@@ -442,7 +451,7 @@ namespace ValvePak.Test
 			package.Read(path);
 			await Assert.That(() => package.VerifyFileChecksums()).ThrowsNothing();
 
-			var file = package.FindEntry("UpperCaseFolder/UpperCaseFile.txt");
+			var file = GetUpperCaseEntry(package);
 			await Assert.That(file).IsNotNull();
 			await Assert.That(file.CRC32).IsEqualTo(0x32CFF012u);
 
@@ -525,11 +534,12 @@ namespace ValvePak.Test
 		}
 
 		[Test]
-		[Arguments(0, "File tree")]
-		[Arguments(16, "Archive MD5 entries")]
-		public async Task SectionChecksumMismatchIsReportedWhenWholeFileChecksumMatches(int checksumOffset, string sectionName)
+		[Arguments(0, "File tree", false)]
+		[Arguments(16, "Archive MD5 entries", false)]
+		[Arguments(0, "File tree", true)]
+		public async Task SectionChecksumMismatchIsReportedOnlyWithoutSignatureHeader(int checksumOffset, string sectionName, bool hasSignatureHeader)
 		{
-			var data = CreateSmallPackageBytes();
+			var data = hasSignatureHeader ? CreateSmallPackageBytes() : CreateSmallPackageBytesWithoutSignatureSection();
 			var otherMD5SectionOffset = GetOtherMD5SectionOffset(data);
 
 			data.AsSpan(otherMD5SectionOffset + checksumOffset, 16).Fill(0xAB);
@@ -540,6 +550,13 @@ namespace ValvePak.Test
 			package.Read(new MemoryStream(data));
 
 			var progress = new SynchronousProgress();
+
+			if (hasSignatureHeader)
+			{
+				await Assert.That(() => package.VerifyHashes(progress)).ThrowsExactly<InvalidDataException>()
+					.WithMessageContaining($"{sectionName} checksum mismatch (", StringComparison.Ordinal);
+				return;
+			}
 
 			await Assert.That(() => package.VerifyHashes(progress)).ThrowsNothing();
 			await Assert.That(progress.Reports).Count().IsEqualTo(1);
@@ -630,6 +647,92 @@ namespace ValvePak.Test
 		}
 
 		[Test]
+		[Arguments("cs2_new_signature_actually_signed.vpk", "Verified the package signature.", 0)]
+		[Arguments("test_single.vpk", "The package is not signed.", 0)]
+		[Arguments("test_dir.vpk", "The package is not signed.", 3)]
+		[Arguments("broken_dir.vpk", "The package is not signed.", 6)]
+		public async Task VerifyReportsStepsAndChecksCrcOfUnhashedEntries(string fileName, string signatureReport, int crcReports)
+		{
+			var path = Path.Combine(AppContext.BaseDirectory, "Files", fileName);
+
+			using var package = new Package();
+			package.Read(path);
+
+			var reports = new List<(int Step, int StepCount, string Message)>();
+			package.Verify(new SynchronousProgress<(int Step, int StepCount, string Message)>(reports.Add));
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(reports.Select(static report => report.Step)).IsEquivalentTo(Enumerable.Range(1, reports.Count), CollectionOrdering.Matching);
+				await Assert.That(reports.All(report => report.StepCount == reports.Count)).IsTrue();
+				await Assert.That(reports[0].Message).IsEqualTo(signatureReport);
+				await Assert.That(reports.Count(static report => report.Message.StartsWith("Verifying CRC32", StringComparison.Ordinal))).IsEqualTo(crcReports);
+				await Assert.That(reports[^1].Message).IsEqualTo("Verified the package.");
+			}
+		}
+
+		[Test]
+		public async Task VerifyThrowsOnCrcMismatchOfUnhashedEntry()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"));
+			package.FindEntry("kitten.jpg")!.CRC32 = 0xDEADBEEF;
+
+			await Assert.That(() => package.Verify()).ThrowsExactly<InvalidDataException>();
+		}
+
+		[Test]
+		public async Task BuildsAndParsesChunkFilePaths()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_dir.vpk"));
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.GetChunkFilePath(1)).IsEqualTo(Path.Combine(AppContext.BaseDirectory, "Files", "test_001.vpk"));
+				await Assert.That(Package.TryParseChunkFilePath("a_b_042.VPK", out var baseName, out var archiveIndex)).IsTrue();
+				await Assert.That(baseName).IsEqualTo("a_b");
+				await Assert.That(archiveIndex).IsEqualTo((ushort)42);
+				await Assert.That(Package.TryParseChunkFilePath("a_dir.vpk", out _, out _)).IsFalse();
+			}
+		}
+
+		[Test]
+		public async Task HasChunkFilesWithoutDirSuffix()
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", "test_without_suffix.vpk"));
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.HasChunkFiles).IsTrue();
+				await Assert.That(package.IsDirVPK).IsFalse();
+			}
+		}
+
+		[Test]
+		[Arguments("test_dir.vpk", (ushort)0)]
+		[Arguments("test_single.vpk", Package.DirectoryArchiveIndex)]
+		public async Task OpensArchiveStreamsAtEntryOffsets(string fileName, ushort archiveIndex)
+		{
+			using var package = new Package();
+			package.Read(Path.Combine(AppContext.BaseDirectory, "Files", fileName));
+
+			using var stream = package.OpenArchiveStream(archiveIndex);
+
+			foreach (var entry in package.Entries!.Values.SelectMany(static entries => entries).Where(entry => entry.ArchiveIndex == archiveIndex))
+			{
+				package.ReadEntry(entry, out var expected);
+				var data = new byte[entry.Length];
+
+				stream.Position = entry.Offset;
+				stream.ReadExactly(data);
+
+				await Assert.That(data).IsEquivalentTo(expected[entry.SmallData.Length..], CollectionOrdering.Matching);
+			}
+		}
+
+		[Test]
 		public async Task SetFileNameStripsVpkExtensionAndDirSuffix()
 		{
 			using var package1 = new Package();
@@ -707,6 +810,11 @@ namespace ValvePak.Test
 		{
 			public List<string> Reports { get; } = [];
 			public void Report(string value) => Reports.Add(value);
+		}
+
+		private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
+		{
+			public void Report(T value) => report(value);
 		}
 
 		[Test]
@@ -927,6 +1035,14 @@ namespace ValvePak.Test
 			package.Write(output);
 
 			return output.ToArray();
+		}
+
+		private static byte[] CreateSmallPackageBytesWithoutSignatureSection()
+		{
+			var package = CreateSmallPackageBytes()[..^UnsignedSignatureSectionSize];
+			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(SignatureSectionSizeOffset), 0);
+
+			return package;
 		}
 
 		private static int GetOtherMD5SectionOffset(byte[] package)

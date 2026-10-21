@@ -21,6 +21,17 @@ namespace ValvePak
 			Stream = stream;
 		}
 
+		public override long Length
+		{
+			get
+			{
+				lock (StreamLock)
+				{
+					return Stream.Length - Origin;
+				}
+			}
+		}
+
 		public override int Read(long offset, Span<byte> output)
 		{
 			lock (StreamLock)

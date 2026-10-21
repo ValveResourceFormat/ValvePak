@@ -1,8 +1,11 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
+using System.IO.Hashing;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 
 namespace ValvePak
 {
@@ -32,17 +35,150 @@ namespace ValvePak
 		private uint FileSizeBeforeSignature;
 
 		/// <summary>
+		/// Verifies the signature, the checksums, the chunk hashes, and the CRC32 checksum of each entry whose data no checksum or chunk hash covers.
+		/// </summary>
+		/// <param name="progressReporter">If provided, will report each step with its number starting at 1, the number of steps, and a message.</param>
+		/// <param name="cancellationToken">A token to cancel the verification.</param>
+		/// <exception cref="InvalidOperationException">The package has not been read.</exception>
+		/// <exception cref="InvalidDataException">The signature is not valid, or a checksum, chunk hash or CRC32 checksum does not match.</exception>
+		public void Verify(IProgress<(int Step, int StepCount, string Message)>? progressReporter = null, CancellationToken cancellationToken = default)
+		{
+			ObjectDisposedException.ThrowIf(IsDisposed, this);
+
+			ThrowIfDirectoryFileClosed();
+
+			var entriesWithUnhashedData = GetEntriesWithUnhashedData();
+			var stepProgress = progressReporter == null
+				? null
+				: new StepProgress(progressReporter, 3 + AccessPackFileHashes.Count + entriesWithUnhashedData.Count);
+
+			if (IsSigned && !IsSignatureValid(cancellationToken))
+			{
+				throw new InvalidDataException("The package signature is not valid.");
+			}
+
+			stepProgress?.Report(IsSigned ? "Verified the package signature." : "The package is not signed.");
+
+			var checksumMessages = VerifyChecksums(cancellationToken);
+
+			stepProgress?.Report(checksumMessages.Count > 0 ? string.Join(' ', checksumMessages) : "Verified the package checksums.");
+
+			VerifyChunkHashFractions(stepProgress, cancellationToken);
+			VerifyEntryChecksums(entriesWithUnhashedData, stepProgress, cancellationToken);
+
+			stepProgress?.Report("Verified the package.");
+		}
+
+		/// <summary>
+		/// Numbers the messages of <see cref="Verify"/> before passing them on.
+		/// </summary>
+		private sealed class StepProgress(IProgress<(int Step, int StepCount, string Message)> progressReporter, int stepCount) : IProgress<string>
+		{
+			private int Step;
+
+			public void Report(string value)
+			{
+				progressReporter.Report((++Step, stepCount, value));
+			}
+		}
+
+		/// <summary>
+		/// Returns the entries, sorted by archive and offset, whose data no checksum or chunk hash covers.
+		/// </summary>
+		private List<PackageEntry> GetEntriesWithUnhashedData()
+		{
+			var ranges = AccessPackFileHashes.Select(static fraction => (fraction.ArchiveIndex, Start: (long)fraction.Offset, End: (long)fraction.Offset + fraction.Length));
+
+			if (Version != 1)
+			{
+				ranges = ranges.Append((DirectoryArchiveIndex, 0, FileDataSectionSize));
+			}
+
+			var hashedRanges = ranges
+				.GroupBy(static range => range.ArchiveIndex)
+				.ToDictionary(static group => group.Key, static group => MergeRanges(group.Select(static range => (range.Start, range.End))));
+
+			return [.. GetAllEntries()
+				.Where(entry => !IsDataHashed(entry, hashedRanges))
+				.OrderBy(static entry => entry.ArchiveIndex)
+				.ThenBy(static entry => entry.Offset)];
+		}
+
+		private bool IsDataHashed(PackageEntry entry, Dictionary<ushort, List<(long Start, long End)>> hashedRanges)
+		{
+			if (Version == 1 || entry.PendingData != null)
+			{
+				return false;
+			}
+
+			if (entry.Length == 0)
+			{
+				return true;
+			}
+
+			if (!hashedRanges.TryGetValue(entry.ArchiveIndex, out var ranges))
+			{
+				return false;
+			}
+
+			var end = (long)entry.Offset + entry.Length;
+
+			foreach (var (start, rangeEnd) in ranges)
+			{
+				if (start <= entry.Offset && end <= rangeEnd)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		/// <summary>
+		/// Sorts the ranges and joins those that overlap or touch.
+		/// </summary>
+		private static List<(long Start, long End)> MergeRanges(IEnumerable<(long Start, long End)> ranges)
+		{
+			var merged = new List<(long Start, long End)>();
+
+			foreach (var range in ranges.OrderBy(static range => range.Start))
+			{
+				if (merged.Count > 0 && range.Start <= merged[^1].End)
+				{
+					merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, range.End));
+				}
+				else
+				{
+					merged.Add(range);
+				}
+			}
+
+			return merged;
+		}
+
+		/// <summary>
 		/// Verify MD5 hashes provided in the VPK.
 		/// </summary>
 		/// <remarks>
 		/// Version 1 packages have no checksums, so nothing is verified for them.
-		/// The whole file checksum covers the file tree and archive MD5 section checksums, so when it matches,
+		/// The whole file checksum covers the file tree and archive MD5 section checksums, so when it matches in a package without a signature header,
 		/// a mismatching file tree or archive MD5 section checksum is reported to <paramref name="progressReporter"/> instead of thrown.
 		/// </remarks>
 		/// <param name="progressReporter">If provided, will report a string for each checksum mismatch that is not thrown, or that a version 1 package has no checksums.</param>
 		/// <exception cref="InvalidOperationException">The package has not been read, or its directory file could not be opened again after writing.</exception>
-		/// <exception cref="InvalidDataException">The package has no checksums, or the whole file checksum does not match.</exception>
+		/// <exception cref="InvalidDataException">The package has no checksums, or a checksum does not match.</exception>
 		public void VerifyHashes(IProgress<string>? progressReporter = null)
+		{
+			foreach (var message in VerifyChecksums(CancellationToken.None))
+			{
+				progressReporter?.Report(message);
+			}
+		}
+
+		/// <summary>
+		/// Verifies the checksums like <see cref="VerifyHashes"/> does, returning the messages it reports.
+		/// </summary>
+		private List<string> VerifyChecksums(CancellationToken cancellationToken)
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
@@ -50,8 +186,7 @@ namespace ValvePak
 
 			if (Version == 1)
 			{
-				progressReporter?.Report("Version 1 packages have no checksums to verify.");
-				return;
+				return ["Version 1 packages have no checksums to verify."];
 			}
 
 			if (TreeChecksum == null || ArchiveMD5EntriesChecksum == null || WholeFileChecksum == null)
@@ -59,21 +194,25 @@ namespace ValvePak
 				throw new InvalidDataException("The package has no checksum section.");
 			}
 
-			var wholeFileHash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5);
+			var wholeFileHash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5, cancellationToken);
 			var wholeFileHashMatches = wholeFileHash.SequenceEqual(WholeFileChecksum);
+			var toleratesSectionMismatch = wholeFileHashMatches && SignatureType != ESignatureType.OnlyFileChecksum;
+			var messages = new List<string>();
 
-			VerifySectionHash("File tree", HeaderSize, TreeSize, TreeChecksum, wholeFileHashMatches, progressReporter);
-			VerifySectionHash("Archive MD5 entries", FileSizeBeforeArchiveMD5Entries, ArchiveMD5SectionSize, ArchiveMD5EntriesChecksum, wholeFileHashMatches, progressReporter);
+			VerifySectionHash("File tree", HeaderSize, TreeSize, TreeChecksum, toleratesSectionMismatch, messages, cancellationToken);
+			VerifySectionHash("Archive MD5 entries", FileSizeBeforeArchiveMD5Entries, ArchiveMD5SectionSize, ArchiveMD5EntriesChecksum, toleratesSectionMismatch, messages, cancellationToken);
 
 			if (!wholeFileHashMatches)
 			{
 				throw new InvalidDataException($"Package checksum mismatch ({BitConverter.ToString(wholeFileHash)} != expected {BitConverter.ToString(WholeFileChecksum)})");
 			}
+
+			return messages;
 		}
 
-		private void VerifySectionHash(string sectionName, long offset, long length, byte[] expected, bool wholeFileHashMatches, IProgress<string>? progressReporter)
+		private void VerifySectionHash(string sectionName, long offset, long length, byte[] expected, bool toleratesMismatch, List<string> messages, CancellationToken cancellationToken)
 		{
-			var hash = HashPackageRange(offset, length, HashAlgorithmName.MD5);
+			var hash = HashPackageRange(offset, length, HashAlgorithmName.MD5, cancellationToken);
 
 			if (hash.SequenceEqual(expected))
 			{
@@ -82,19 +221,19 @@ namespace ValvePak
 
 			var message = $"{sectionName} checksum mismatch ({BitConverter.ToString(hash)} != expected {BitConverter.ToString(expected)})";
 
-			if (!wholeFileHashMatches)
+			if (!toleratesMismatch)
 			{
 				throw new InvalidDataException(message);
 			}
 
-			progressReporter?.Report($"{message}, ignored because the package checksum matches.");
+			messages.Add($"{message}, ignored because the package checksum matches.");
 		}
 
 		/// <summary>
 		/// Computes the hash of a range of the package, at an offset from the start of the package.
 		/// The hash covers fewer bytes if the package ends before the range does.
 		/// </summary>
-		private byte[] HashPackageRange(long offset, long length, HashAlgorithmName hashAlgorithm)
+		private byte[] HashPackageRange(long offset, long length, HashAlgorithmName hashAlgorithm, CancellationToken cancellationToken)
 		{
 			var archive = GetArchive(DirectoryArchiveIndex);
 			var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(length, ChunkHashBufferSize));
@@ -105,6 +244,8 @@ namespace ValvePak
 
 				while (length > 0)
 				{
+					cancellationToken.ThrowIfCancellationRequested();
+
 					var count = (int)Math.Min(length, buffer.Length);
 					var bytesRead = archive.Read(offset, buffer.AsSpan(0, count));
 
@@ -134,6 +275,16 @@ namespace ValvePak
 		{
 			ObjectDisposedException.ThrowIf(IsDisposed, this);
 
+			VerifyChunkHashFractions(progressReporter, CancellationToken.None);
+
+			progressReporter?.Report("Successfully verified archive hashes.");
+		}
+
+		/// <summary>
+		/// Verifies every entry of <see cref="AccessPackFileHashes"/>, reporting a string before each.
+		/// </summary>
+		private void VerifyChunkHashFractions(IProgress<string>? progressReporter, CancellationToken cancellationToken)
+		{
 			// When created by Valve, entries are sorted, and are 1MB chunks
 			var allEntries = AccessPackFileHashes
 				.OrderBy(file => file.ArchiveIndex)
@@ -147,6 +298,8 @@ namespace ValvePak
 
 			foreach (var entry in allEntries)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
+
 				var hashTypeName = entry.HashType switch
 				{
 					EHashType.Blake3 => "Blake3",
@@ -195,8 +348,6 @@ namespace ValvePak
 					throw new InvalidDataException($"Package checksum mismatch ({hashTypeName}) in archive {entry.ArchiveIndex} at {entry.Offset} ({Convert.ToHexString(hash)} != expected {Convert.ToHexString(entry.Checksum)})");
 				}
 			}
-
-			progressReporter?.Report("Successfully verified archive hashes.");
 		}
 
 		/// <summary>
@@ -213,26 +364,48 @@ namespace ValvePak
 				return;
 			}
 
-			var allEntries = Entries
-				.SelectMany(file => file.Value)
+			var allEntries = GetAllEntries()
 				.OrderBy(file => file.ArchiveIndex)
 				.ThenBy(file => file.Offset);
 
-			var buffer = Array.Empty<byte>();
-
-			foreach (var entry in allEntries)
-			{
-				progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
-
-				if (buffer.Length < entry.TotalLength)
-				{
-					buffer = new byte[entry.TotalLength];
-				}
-
-				ReadEntry(entry, buffer, validateCrc: true);
-			}
+			VerifyEntryChecksums(allEntries, progressReporter, CancellationToken.None);
 
 			progressReporter?.Report("Successfully verified file CRC32 checksums.");
+		}
+
+		/// <summary>
+		/// Verifies the CRC32 checksum of each of the entries, reporting a string before each.
+		/// </summary>
+		private void VerifyEntryChecksums(IEnumerable<PackageEntry> entries, IProgress<string>? progressReporter, CancellationToken cancellationToken)
+		{
+			var crc = new Crc32();
+			Action<ReadOnlySpan<byte>> appendToCrc = crc.Append;
+
+			foreach (var entry in entries)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+
+				progressReporter?.Report($"Verifying CRC32 checksum for '{entry.GetFullPath()}' in archive {entry.ArchiveIndex}.");
+
+				crc.Append(entry.SmallData);
+
+				if (entry.PendingData != null)
+				{
+					crc.Append(entry.PendingData);
+				}
+				else
+				{
+					ReadArchiveDataInBlocks(entry.ArchiveIndex, entry.Offset, entry.Length, appendToCrc);
+				}
+
+				var actualChecksum = crc.GetCurrentHashAsUInt32();
+				crc.Reset();
+
+				if (entry.CRC32 != actualChecksum)
+				{
+					throw new InvalidDataException($"CRC32 mismatch for '{entry.GetFullPath()}' (expected {entry.CRC32:X2}, got {actualChecksum:X2}).");
+				}
+			}
 		}
 
 		/// <summary>
@@ -240,6 +413,11 @@ namespace ValvePak
 		/// </summary>
 		/// <returns>True if the signature is valid or the package has no signature (see <see cref="IsSigned"/>), false otherwise.</returns>
 		public bool IsSignatureValid()
+		{
+			return IsSignatureValid(CancellationToken.None);
+		}
+
+		private bool IsSignatureValid(CancellationToken cancellationToken)
 		{
 			if (PublicKey == null || Signature == null)
 			{
@@ -261,7 +439,7 @@ namespace ValvePak
 					return false;
 				}
 
-				var hash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5);
+				var hash = HashPackageRange(0, FileSizeBeforeWholeFileHash, HashAlgorithmName.MD5, cancellationToken);
 
 				if (!hash.SequenceEqual(WholeFileChecksum))
 				{
@@ -277,7 +455,7 @@ namespace ValvePak
 				return false;
 			}
 
-			var signedHash = HashPackageRange(0, FileSizeBeforeSignature, HashAlgorithmName.SHA256);
+			var signedHash = HashPackageRange(0, FileSizeBeforeSignature, HashAlgorithmName.SHA256, cancellationToken);
 
 			return rsa.VerifyHash(signedHash, Signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 		}

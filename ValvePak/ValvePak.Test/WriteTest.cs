@@ -168,51 +168,36 @@ namespace ValvePak.Test
 			using var package = new Package();
 			package.OptimizeEntriesForBinarySearch(comparison);
 
-			var entry = package.AddFile("\\Materials//./Models/./Crate.VMAT_C/", Encoding.UTF8.GetBytes("crate"));
-			var noExtension = package.AddFile("./readme.", []);
-			var trailingDots = package.AddFile("notes..", [1]);
-			var trailingDotAfterExtension = package.AddFile("archive.tar.", [2]);
+			var entry = package.AddFile("\\Materials//./Models/../Models/Crate.VMAT_C", Encoding.UTF8.GetBytes("crate"));
+			var noExtension = package.AddFile("./Docs/ReadMe", []);
 
 			using (Assert.Multiple())
 			{
 				await Assert.That(entry.DirectoryName).IsEqualTo("materials/models");
 				await Assert.That(entry.FileName).IsEqualTo("crate");
 				await Assert.That(entry.TypeName).IsEqualTo("vmat_c");
-				await Assert.That(noExtension.DirectoryName).IsEqualTo(" ");
 				await Assert.That(noExtension.TypeName).IsEqualTo(" ");
-				await Assert.That(package.FindEntry("materials/models/crate.vmat_c")).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("/materials\\models//crate.vmat_c")).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("./materials/./models/crate.vmat_c/".AsSpan())).IsEqualTo(entry);
-				await Assert.That(package.FindEntry("readme")).IsEqualTo(noExtension);
-				await Assert.That(package.FindEntry("/readme.")).IsEqualTo(noExtension);
-				await Assert.That(trailingDots.FileName).IsEqualTo("notes");
-				await Assert.That(trailingDots.TypeName).IsEqualTo(" ");
-				await Assert.That(trailingDotAfterExtension.FileName).IsEqualTo("archive");
-				await Assert.That(trailingDotAfterExtension.TypeName).IsEqualTo("tar");
-
-				foreach (var added in new[] { entry, noExtension, trailingDots, trailingDotAfterExtension })
-				{
-					await Assert.That(package.FindEntry(added.GetFullPath())).IsEqualTo(added);
-				}
+				await Assert.That(package.FindEntry("/MATERIALS\\models//crate.vmat_c")).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("./materials/./textures/../models/crate.vmat_c".AsSpan())).IsEqualTo(entry);
+				await Assert.That(package.FindEntry("DOCS/README")).IsEqualTo(noExtension);
+				await Assert.That(package.FindEntry("materials/models/crate.vmat_c/")).IsNull();
+				await Assert.That(package.FindEntry("../materials/models/crate.vmat_c")).IsNull();
 			}
 		}
 
 		[Test]
 		[Arguments(false)]
 		[Arguments(true)]
-		public async Task FindsReadEntriesWhoseNamesAreNotNormalized(bool optimize)
+		public async Task DoesNotFindReadEntriesWhoseNamesAreNotNormalized(bool optimize)
 		{
 			(string Directory, string File, string Type)[] names =
 			[
 				("a//b", "file", "txt"),
-				("a/./b", "file", "txt"),
-				("./rel", "file", "txt"),
-				("/leading", "file", "txt"),
-				("trailing/", "file", "txt"),
+				("a/../b", "file", "txt"),
 				("back\\slash", "file", "txt"),
 				(" ", "has.dot", " "),
-				("dir", "noext.", " "),
 				(" ", "archive", "tar.gz"),
+				("Upper", "File", "TXT"),
 				("dir", "archive.tar", "gz"),
 			];
 
@@ -241,18 +226,22 @@ namespace ValvePak.Test
 			readBack.SetFileName("test.vpk");
 			readBack.Read(output);
 
-			var entries = readBack.Entries!.Values.SelectMany(static entries => entries).ToList();
+			var entries = readBack.Entries!.Values.SelectMany(static entries => entries).ToDictionary(static entry => entry.GetFullPath());
 			await Assert.That(entries).Count().IsEqualTo(names.Length);
-
-			foreach (var entry in entries)
-			{
-				await Assert.That(readBack.FindEntry(entry.GetFullPath())).IsSameReferenceAs(entry);
-			}
 
 			using (Assert.Multiple())
 			{
-				await Assert.That(readBack.FindEntry("dir/noext")).IsNull();
-				await Assert.That(readBack.FindEntry("has")).IsNull();
+				foreach (var (path, entry) in entries)
+				{
+					var expected = path switch
+					{
+						"dir/archive.tar.gz" => entry,
+						"Upper/File.TXT" when optimize => entry,
+						_ => null,
+					};
+
+					await Assert.That(readBack.FindEntry(path)).IsSameReferenceAs(expected);
+				}
 			}
 		}
 
@@ -340,7 +329,7 @@ namespace ValvePak.Test
 			using (Assert.Multiple())
 			{
 				await Assert.That(emptyEntry.ArchiveIndex).IsEqualTo((ushort)0x7FFF);
-				await Assert.That(emptyEntry.Offset).IsEqualTo(uint.MaxValue);
+				await Assert.That(emptyEntry.Offset).IsEqualTo((uint)dataLength);
 				await Assert.That(emptyEntry.Length).IsZero();
 				await Assert.That(readBack.ArchiveMD5SectionSize).IsEqualTo((uint)(fractionCount * ChunkHashFraction.SectionEntrySize));
 				await Assert.That(signatureSection.Length).IsEqualTo(20);
@@ -667,17 +656,7 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry(entry.GetFullPath())).IsEqualTo(entry);
 			}
 
-			var upperCaseEntry = package.FindEntry("ADDONS/CHESS/ZZZ.VDF");
-
-			if (comparison == StringComparison.OrdinalIgnoreCase)
-			{
-				await Assert.That(upperCaseEntry).IsEqualTo(addedEntries[0]);
-			}
-			else
-			{
-				await Assert.That(upperCaseEntry).IsNull();
-			}
-
+			await Assert.That(package.FindEntry("ADDONS/CHESS/ZZZ.VDF")).IsEqualTo(addedEntries[0]);
 			await Assert.That(package.FindEntry("addons/chess/missing.vdf")).IsNull();
 		}
 
@@ -700,6 +679,24 @@ namespace ValvePak.Test
 				await Assert.That(package.FindEntry("path/to/cat.png")).IsEqualTo(entry);
 				await Assert.That(package.Entries!.ContainsKey("jpg")).IsFalse();
 				await Assert.That(() => package.RenameFile(otherEntry, "other.txt")).ThrowsExactly<ArgumentException>();
+			}
+		}
+
+		[Test]
+		public async Task RenamesAndRemovesDirectories()
+		{
+			using var package = new Package();
+			var file = package.AddFile("materials/a.txt", [1]);
+			var nested = package.AddFile("materials/sub/b.txt", [2]);
+			var sibling = package.AddFile("materialsx/c.txt", [3]);
+
+			using (Assert.Multiple())
+			{
+				await Assert.That(package.RenameDirectory("materials/", "Renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
+				await Assert.That(nested.GetFullPath()).IsEqualTo("renamed/sub/b.txt");
+				await Assert.That(sibling.GetFullPath()).IsEqualTo("materialsx/c.txt");
+				await Assert.That(package.RemoveDirectory("renamed")).IsEquivalentTo([file, nested], CollectionOrdering.Any);
+				await Assert.That(package.Entries!["txt"]).IsEquivalentTo([sibling], CollectionOrdering.Matching);
 			}
 		}
 
