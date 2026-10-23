@@ -72,6 +72,13 @@ namespace ValvePak
 			return bytesRead;
 		}
 
+		public override int ReadByte()
+		{
+			Span<byte> buffer = stackalloc byte[1];
+
+			return Read(buffer) == 1 ? buffer[0] : -1;
+		}
+
 		/// <summary>
 		/// Reads at the given position of the stream without moving its position.
 		/// This method is safe to call from multiple threads.

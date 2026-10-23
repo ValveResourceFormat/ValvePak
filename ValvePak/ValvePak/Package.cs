@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
@@ -340,13 +341,12 @@ namespace ValvePak
 				return default;
 			}
 
-			int hi = entriesForExtension.Count - 1;
+			var entries = CollectionsMarshal.AsSpan(entriesForExtension);
 
 			if (Comparer == null)
 			{
-				for (var i = 0; i <= hi; i++) // Don't use foreach
+				foreach (var entry in entries)
 				{
-					var entry = entriesForExtension[i];
 					if (directory.SequenceEqual(entry.DirectoryName) && fileName.SequenceEqual(entry.FileName))
 					{
 						return entry;
@@ -362,12 +362,14 @@ namespace ValvePak
 			// Manually implement binary search to avoid allocating new strings for file and directory names.
 			// See <see cref="MemoryExtensions.BinarySearch{T}(ReadOnlySpan{T}, IComparable{T})"/> for reference.
 
+			var comparison = Comparer.Comparison;
 			int lo = 0;
+			int hi = entries.Length - 1;
 
 			while (lo <= hi)
 			{
 				var i = (int)(((uint)hi + (uint)lo) >> 1);
-				var entry = entriesForExtension[i];
+				var entry = entries[i];
 
 				// This code must match <see cref="CaseInsensitivePackageEntryComparer.Compare(PackageEntry, PackageEntry)"/>
 				var comp = fileName.Length.CompareTo(entry.FileName.Length);
@@ -378,11 +380,11 @@ namespace ValvePak
 
 					if (comp == 0)
 					{
-						comp = fileName.CompareTo(entry.FileName, Comparer.Comparison);
+						comp = fileName.CompareTo(entry.FileName, comparison);
 
 						if (comp == 0)
 						{
-							comp = directory.CompareTo(entry.DirectoryName, Comparer.Comparison);
+							comp = directory.CompareTo(entry.DirectoryName, comparison);
 						}
 					}
 				}
@@ -679,6 +681,12 @@ namespace ValvePak
 		{
 			public override int Compare(string? x, string? y)
 			{
+				// Entries in one directory share the directory name string
+				if (ReferenceEquals(x, y))
+				{
+					return 0;
+				}
+
 				return x == null || y == null ? string.CompareOrdinal(x, y) : CompareAscii(x, y);
 			}
 
@@ -711,7 +719,7 @@ namespace ValvePak
 			{
 				var length = Math.Min(x.Length, y.Length);
 
-				for (var i = 0; i < length; i++)
+				for (var i = x.CommonPrefixLength(y); i < length; i++)
 				{
 					var comparison = ToLowerAscii(x[i]).CompareTo(ToLowerAscii(y[i]));
 

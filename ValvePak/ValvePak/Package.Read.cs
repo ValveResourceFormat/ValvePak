@@ -470,28 +470,42 @@ namespace ValvePak
 				throw new InvalidDataException($"Archive MD5 section size ({ArchiveMD5SectionSize}) is larger than the rest of the file ({input.Length - input.Position}).");
 			}
 
-			var entries = (int)(ArchiveMD5SectionSize / ChunkHashFraction.SectionEntrySize);
+			var sectionSize = (int)ArchiveMD5SectionSize;
+			var section = ArrayPool<byte>.Shared.Rent(sectionSize);
 
-			AccessPackFileHashes = new List<ChunkHashFraction>(entries);
+			AccessPackFileHashes = new List<ChunkHashFraction>(sectionSize / ChunkHashFraction.SectionEntrySize);
 
-			for (var i = 0; i < entries; i++)
+			try
 			{
-				var hashFraction = new ChunkHashFraction
-				{
-					ArchiveIndex = Reader.ReadUInt16(),
-					HashType = (EHashType)Reader.ReadUInt16(),
-					Offset = Reader.ReadUInt32(),
-					Length = Reader.ReadUInt32(),
-					Checksum = Reader.ReadBytes(16)
-				};
+				input.ReadExactly(section, 0, sectionSize);
 
-				if (hashFraction.ArchiveIndex == 0 && hashFraction.HashType == (EHashType)0x8000)
+				var data = section.AsSpan(0, sectionSize);
+
+				while (data.Length >= ChunkHashFraction.SectionEntrySize)
 				{
-					hashFraction.ArchiveIndex = DirectoryArchiveIndex;
-					hashFraction.HashType = EHashType.MD5;
+					var hashFraction = new ChunkHashFraction
+					{
+						ArchiveIndex = BinaryPrimitives.ReadUInt16LittleEndian(data),
+						HashType = (EHashType)BinaryPrimitives.ReadUInt16LittleEndian(data[2..]),
+						Offset = BinaryPrimitives.ReadUInt32LittleEndian(data[4..]),
+						Length = BinaryPrimitives.ReadUInt32LittleEndian(data[8..]),
+						Checksum = data.Slice(12, 16).ToArray(),
+					};
+
+					if (hashFraction.ArchiveIndex == 0 && hashFraction.HashType == (EHashType)0x8000)
+					{
+						hashFraction.ArchiveIndex = DirectoryArchiveIndex;
+						hashFraction.HashType = EHashType.MD5;
+					}
+
+					AccessPackFileHashes.Add(hashFraction);
+
+					data = data[ChunkHashFraction.SectionEntrySize..];
 				}
-
-				AccessPackFileHashes.Add(hashFraction);
+			}
+			finally
+			{
+				ArrayPool<byte>.Shared.Return(section);
 			}
 		}
 
