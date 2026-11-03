@@ -734,13 +734,14 @@ namespace ValvePak
 					var staleHighestIndex = writesOverChunkFiles ? HighestChunkIndex : -1;
 
 					ApplyRepackedLayout(chunkLocations, chunkHashFractions, baseName, isDirVpk, chunkReplacements.Count);
-					backupPaths.ForEach(TryDeleteFile);
 
 					if (chunkReplacements.Count > 0 || writesOverChunkFiles)
 					{
 						DeleteStaleChunkFiles(baseName, chunkReplacements.Count, staleHighestIndex);
 					}
 				}
+
+				backupPaths.ForEach(TryDeleteFile);
 
 				if (readsWrittenFile)
 				{
@@ -845,7 +846,7 @@ namespace ValvePak
 		/// <summary>
 		/// Replaces the files, closing the directory file first when it is the one the package reads from, and opening it again if replacing fails.
 		/// </summary>
-		/// <returns>The paths that the replaced chunk files were moved aside to.</returns>
+		/// <returns>The paths that the replaced files were moved aside to.</returns>
 		private List<string> ReplaceFilesOrReopen(List<FileReplacement> chunkReplacements, FileReplacement directoryReplacement, string token, bool replacesReadFile)
 		{
 			if (!replacesReadFile)
@@ -947,17 +948,19 @@ namespace ValvePak
 
 		/// <summary>
 		/// Moves the temporary files over their targets, the directory file last.
-		/// Existing chunk files are moved aside first and are moved back if any move fails, so that either all files are replaced or none are.
+		/// Existing files are moved aside first and are moved back if any move fails, so that either all files are replaced or none are.
+		/// Moving a file aside works while other readers that share delete access have it open, replacing it in place does not.
 		/// </summary>
-		/// <returns>The paths that the replaced chunk files were moved aside to.</returns>
+		/// <returns>The paths that the replaced files were moved aside to.</returns>
 		private static List<string> ReplaceFiles(List<FileReplacement> chunkReplacements, FileReplacement directoryReplacement, string token)
 		{
+			List<FileReplacement> replacements = [.. chunkReplacements, directoryReplacement];
 			var backups = new Dictionary<string, string>();
 			var replaced = new List<string>();
 
 			try
 			{
-				foreach (var (_, path) in chunkReplacements)
+				foreach (var (_, path) in replacements)
 				{
 					if (File.Exists(path))
 					{
@@ -967,14 +970,11 @@ namespace ValvePak
 					}
 				}
 
-				foreach (var (temporaryPath, path) in chunkReplacements)
+				foreach (var (temporaryPath, path) in replacements)
 				{
 					File.Move(temporaryPath, path, overwrite: true);
 					replaced.Add(path);
 				}
-
-				File.Move(directoryReplacement.TemporaryPath, directoryReplacement.Path, overwrite: true);
-				replaced.Add(directoryReplacement.Path);
 			}
 			catch (Exception exception)
 			{

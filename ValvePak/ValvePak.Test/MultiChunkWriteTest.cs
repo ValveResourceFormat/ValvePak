@@ -681,9 +681,11 @@ namespace ValvePak.Test
 			package.Read(path);
 			package.AddFile("added.bin", CreateTestData(300, 2));
 
-			File.SetAttributes(path, FileAttributes.ReadOnly);
-			await Assert.That(() => package.Write(path)).ThrowsExactly<UnauthorizedAccessException>();
-			File.SetAttributes(path, FileAttributes.Normal);
+			// Another reader that does not share delete access keeps the file from being moved aside
+			using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+			{
+				await Assert.That(() => package.Write(path)).ThrowsExactly<IOException>();
+			}
 
 			package.Write(otherPath);
 
@@ -830,10 +832,11 @@ namespace ValvePak.Test
 			package.Read(dirPath);
 			package.RemoveFile(package.FindEntry("kitten.jpg")!);
 
-			// The chunk file is replaced before the directory file, which can not be
-			File.SetAttributes(dirPath, FileAttributes.ReadOnly);
-			await Assert.That(() => package.Write(dirPath, repack: true)).ThrowsExactly<UnauthorizedAccessException>();
-			File.SetAttributes(dirPath, FileAttributes.Normal);
+			// The chunk file is moved aside before the directory file, which another reader that does not share delete access keeps in place
+			using (new FileStream(dirPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+			{
+				await Assert.That(() => package.Write(dirPath, repack: true)).ThrowsExactly<IOException>();
+			}
 
 			await Assert.That(Directory.GetFiles(TempDirectory)).Count().IsEqualTo(originalFiles.Count);
 
