@@ -30,7 +30,7 @@ namespace ValvePak
 
 			SetFileName(filename);
 
-			var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+			var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
 			Read(fs);
 		}
@@ -157,7 +157,7 @@ namespace ValvePak
 			ReadFilePath = path;
 			IsReadFromAnotherPackage = false;
 
-			var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+			var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
 			try
 			{
@@ -612,7 +612,7 @@ namespace ValvePak
 				}
 
 				var fileName = GetArchiveIndexFullFilePath(GetChunkBaseName(), archiveIndex);
-				var handle = File.OpenHandle(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+				var handle = File.OpenHandle(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
 				archive = new FileArchive(handle, ownsHandle: true, origin: 0, dataOffset: 0);
 				Archives[archiveIndex] = archive;
