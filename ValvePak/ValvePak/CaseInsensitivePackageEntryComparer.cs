@@ -4,7 +4,7 @@ using System.Diagnostics;
 
 namespace ValvePak
 {
-	sealed class CaseInsensitivePackageEntryComparer(StringComparison comparison) : IComparer<PackageEntry>
+	internal sealed class CaseInsensitivePackageEntryComparer(StringComparison comparison) : IComparer<PackageEntry>
 	{
 		public StringComparison Comparison { get; } = comparison;
 

@@ -1534,7 +1534,7 @@ namespace ValvePak
 		{
 			public const int FileFractionSize = 0x00100000; // 1 MiB
 
-			private Blake3.Hasher hasher = Blake3.Hasher.New();
+			private readonly Blake3.Hasher hasher = Blake3.Hasher.New();
 			private readonly List<ChunkHashFraction> fractions = [];
 			private uint fractionOffset;
 			private uint bytesInFraction;

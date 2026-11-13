@@ -494,8 +494,8 @@ namespace ValvePak.Test
 				await Assert.That(package.SignatureType).IsEqualTo(ESignatureType.OnlyFileChecksum);
 				await Assert.That(package.PublicKey).IsNotNull();
 				await Assert.That(package.Signature).IsNotNull();
-				await Assert.That(package.PublicKey!).Count().IsEqualTo(550);
-				await Assert.That(package.Signature!).Count().IsEqualTo(512);
+				await Assert.That(package.PublicKey).Count().IsEqualTo(550);
+				await Assert.That(package.Signature).Count().IsEqualTo(512);
 				await Assert.That(package.IsSignatureValid()).IsTrue();
 			}
 		}
@@ -822,7 +822,7 @@ namespace ValvePak.Test
 		{
 			var package = new Package();
 			package.Dispose();
-			await Assert.That(() => package.Dispose()).ThrowsNothing();
+			await Assert.That(package.Dispose).ThrowsNothing();
 		}
 
 		[Test]
@@ -875,39 +875,38 @@ namespace ValvePak.Test
 			{
 				var expected = ReadAllEntryData(Path.Combine(AppContext.BaseDirectory, "Files", "test_single.vpk"));
 
-				using (var package = await ReadEmbeddedPackage("test_single.vpk", fromFile, directory))
+				using var package = await ReadEmbeddedPackage("test_single.vpk", fromFile, directory);
+
+				await Assert.That(package.HeaderSize).IsEqualTo(28u);
+				await Assert.That(package.Entries).IsNotNull();
+
+				var entryCount = 0;
+
+				foreach (var entries in package.Entries.Values)
 				{
-					await Assert.That(package.HeaderSize).IsEqualTo(28u);
-					await Assert.That(package.Entries).IsNotNull();
-
-					var entryCount = 0;
-
-					foreach (var entries in package.Entries.Values)
+					foreach (var entry in entries)
 					{
-						foreach (var entry in entries)
+						var path = entry.GetFullPath();
+
+						package.ReadEntry(entry, out var data, validateCrc: true);
+
+						using var mapped = package.GetMemoryMappedStreamIfPossible(entry);
+						using var mappedCopy = new MemoryStream();
+						await mapped.CopyToAsync(mappedCopy);
+
+						using (Assert.Multiple())
 						{
-							var path = entry.GetFullPath();
-
-							package.ReadEntry(entry, out var data, validateCrc: true);
-
-							using var mapped = package.GetMemoryMappedStreamIfPossible(entry);
-							using var mappedCopy = new MemoryStream();
-							await mapped.CopyToAsync(mappedCopy);
-
-							using (Assert.Multiple())
-							{
-								await Assert.That(data).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
-								await Assert.That(mappedCopy.ToArray()).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
-							}
-
-							entryCount++;
+							await Assert.That(data).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
+							await Assert.That(mappedCopy.ToArray()).IsEquivalentTo(expected[path], CollectionOrdering.Matching);
 						}
-					}
 
-					await Assert.That(entryCount).IsEqualTo(expected.Count);
-					await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
-					await Assert.That(() => package.VerifyFileChecksums()).ThrowsNothing();
+						entryCount++;
+					}
 				}
+
+				await Assert.That(entryCount).IsEqualTo(expected.Count);
+				await Assert.That(() => package.VerifyHashes()).ThrowsNothing();
+				await Assert.That(() => package.VerifyFileChecksums()).ThrowsNothing();
 			}
 			finally
 			{
@@ -1009,7 +1008,7 @@ namespace ValvePak.Test
 			var treeBytes = Encoding.ASCII.GetBytes(tree);
 			var package = new byte[12 + treeBytes.Length];
 
-			BinaryPrimitives.WriteUInt32LittleEndian(package, (uint)Package.MAGIC);
+			BinaryPrimitives.WriteUInt32LittleEndian(package, Package.MAGIC);
 			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(4), 1);
 			BinaryPrimitives.WriteUInt32LittleEndian(package.AsSpan(8), (uint)treeBytes.Length);
 			treeBytes.CopyTo(package, 12);
@@ -1124,15 +1123,19 @@ namespace ValvePak.Test
 				await File.WriteAllBytesAsync(path, embedded);
 
 #pragma warning disable CA2000 // The package disposes the stream
-				var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+				var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+				{
+					Position = EmbeddedPrefixLength,
+				};
 #pragma warning restore CA2000
-				fileStream.Position = EmbeddedPrefixLength;
 				package.Read(fileStream);
 			}
 			else
 			{
-				var memoryStream = new MemoryStream(embedded);
-				memoryStream.Position = EmbeddedPrefixLength;
+				var memoryStream = new MemoryStream(embedded)
+				{
+					Position = EmbeddedPrefixLength,
+				};
 				package.Read(memoryStream);
 			}
 

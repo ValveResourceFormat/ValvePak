@@ -199,8 +199,8 @@ namespace ValvePak
 
 				if (mergedCount > 0 && range.Start <= ranges[mergedCount - 1].End)
 				{
-					var last = ranges[mergedCount - 1];
-					ranges[mergedCount - 1] = (last.Start, Math.Max(last.End, range.End));
+					var (lastStart, lastEnd) = ranges[mergedCount - 1];
+					ranges[mergedCount - 1] = (lastStart, Math.Max(lastEnd, range.End));
 				}
 				else
 				{

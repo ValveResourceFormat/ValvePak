@@ -224,11 +224,8 @@ namespace ValvePak
 					Archives.Clear();
 				}
 
-				if (Reader != null)
-				{
-					Reader.Dispose();
-					Reader = null;
-				}
+				Reader?.Dispose();
+				Reader = null;
 			}
 		}
 
